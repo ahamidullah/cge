@@ -3,17 +3,19 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <assert.h>
-#include "sys.h"
+#include "zlib.h"
 
-#define MAX_ERR_LEN 1024
+enum {
+	max_err_len = 1024,
+};
 
-namespace sys {
+namespace zlib {
 
 void
 zerror(const char *filename, int linenum, const char *funcname, bool abort, const char *err_fmt, ...)
 {
 	va_list argptr;
-	char err_msg[MAX_ERR_LEN];
+	char err_msg[max_err_len];
 	va_start(argptr, err_fmt);
 	vsprintf(err_msg, err_fmt, argptr);
 	va_end(argptr);
@@ -35,7 +37,7 @@ zmalloc(size_t sz)
 void
 zfree(void* p)
 {
-
+	free(p);
 }
 
-} //end sys
+} //end zlib

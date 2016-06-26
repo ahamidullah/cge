@@ -3,7 +3,7 @@
 
 namespace render {
 	void init_gl();
-	void display();
+	void render();
 }
 
 #endif
