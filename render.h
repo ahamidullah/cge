@@ -2,7 +2,7 @@
 #define __RENDER_H__
 
 namespace render {
-	void init_gl();
+	void init(const int screen_widht, const int screen_height);
 	void render();
 }
 

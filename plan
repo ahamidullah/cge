@@ -1,5 +1,4 @@
 TODO_NEW:
-	-textures
 	-imgui
 	-camera
 	-input
@@ -9,3 +8,7 @@ TODO_BUGS:
 DONE:
 	Sun Jun 26 05:03:15 EDT 2016
 	+sdl
+
+	Tue Jun 28 08:16:21 EDT 2016
+	+texture
+	+c++ garbage
