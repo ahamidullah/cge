@@ -5,6 +5,9 @@
 #include "zlib.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 static GLfloat g_verts[] = {
 	// Positions          // Colors           // Texture Coords
@@ -67,8 +70,6 @@ init_shaders()
 {
 	const std::vector<std::string> shader_strs { zlib::load_file("shader.vert"), zlib::load_file("shader.frag") }; // ORDER MATTERS FOR NOW
 	g_program = make_program(shader_strs);
-/*	for (auto& str : shader_strs)
-		zlib::zfree(str);*/
 }
 
 void
@@ -115,7 +116,7 @@ GLuint
 make_program(const std::vector<std::string>& shader_strs)
 {
 	const std::vector<GLuint> shaders { make_shader(GL_VERTEX_SHADER, shader_strs[0]),
-                                        make_shader(GL_FRAGMENT_SHADER, shader_strs[1]) };
+                                            make_shader(GL_FRAGMENT_SHADER, shader_strs[1]) };
 	GLuint program = glCreateProgram();
 	for (auto sh : shaders) {
 		glAttachShader(program, sh);
@@ -132,32 +133,70 @@ make_program(const std::vector<std::string>& shader_strs)
 }
 
 GLuint
-make_shader(const GLenum shader_type, std::string shader_str)
+make_shader(const GLenum shader_type, const std::string shader_str)
 {
 	const GLuint shader = glCreateShader(shader_type);
 	const char * shader_cstr = shader_str.c_str();
 	glShaderSource(shader, 1, &shader_cstr, NULL);
 	glCompileShader(shader);
 
-	const char *shader_type_str = NULL;
-	switch(shader_type)
-	{
-		case GL_VERTEX_SHADER: shader_type_str = "vertex"; break;
-		case GL_GEOMETRY_SHADER: shader_type_str = "geometry"; break;
-		case GL_FRAGMENT_SHADER: shader_type_str = "fragment"; break;
-	}
+	const char *shader_type_str = [shader_type] {
+		switch(shader_type)
+		{
+			case GL_VERTEX_SHADER: return "vertex";
+			case GL_GEOMETRY_SHADER: return "geometry";
+			case GL_FRAGMENT_SHADER: return "fragment";
+			default: return "DEFAULT";
+		}
+	} ();
 	GL_CHECK_ERR(shader, glGetShaderiv, GL_COMPILE_STATUS, glGetShaderInfoLog, "compile failure in %s shader", shader_type_str);
 	return shader;
+}
+
+SDL_Surface *
+flip_surface(SDL_Surface*& s)
+{
+	auto getpixel = [] (SDL_Surface *surface, int x, int y) {
+		u32 *pixels = (u32 *)surface->pixels;
+		return pixels[(y * surface->w) + x];
+	};
+
+	auto putpixel = [] (SDL_Surface *surface, int x, int y, Uint32 pixel) {
+		u32 *pixels = (u32 *)surface->pixels;
+		pixels[(y * surface->w) + x] = pixel;
+	};
+
+	SDL_Surface* flip = SDL_CreateRGBSurface(0, (s)->w, s->h, s->format->BitsPerPixel, s->format->Rmask, s->format->Gmask, s->format->Bmask, s->format->Amask);
+	
+	for(int y=0; y<s->h; y++)
+	{
+		for(int x=0; x<s->w; x++)
+		{
+			//copy pixels, but reverse the x pixels!
+			putpixel(flip, x, y, getpixel(s, x, s->h - y - 1));
+		}
+	}
+
+	SDL_FreeSurface(s);
+	s = flip;
+	return flip;
+}
+
+SDL_Surface *load_surface(const char *fname)
+{
+	SDL_Surface *surface;
+	if (!(surface = IMG_Load(fname))) {
+		zlib::PRINTERR("IMG_Load failed! IMG_GetError: %s\n", IMG_GetError);
+	}
+	return surface;
 }
 
 void
 load_textures()
 {
-	SDL_Surface *surface;
+	SDL_Surface *surface = load_surface("sample2.png");
+	surface = flip_surface(surface);
 
-	if (!(surface = IMG_Load("wall.jpg"))) {
-		zlib::PRINTERR("IMG_Load failed! IMG_GetError: %s\n", IMG_GetError);
-	}
 	glGenTextures(1, &g_tex);
 	glBindTexture(GL_TEXTURE_2D, g_tex);
 
@@ -167,7 +206,7 @@ load_textures()
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, surface->w, surface->h, 0, GL_RGB, GL_UNSIGNED_BYTE, surface->pixels);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, surface->w, surface->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, surface->pixels);
 	glGenerateMipmap(GL_TEXTURE_2D);
 	SDL_FreeSurface(surface);
 	glBindTexture(GL_TEXTURE_2D, 0);
@@ -178,13 +217,21 @@ namespace render {
 void
 render()
 {
+
 	glClear(GL_COLOR_BUFFER_BIT);
 	glUseProgram(g_program);
-	
+
 	// set frag shader's sampler2d to the desired texture unit
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, g_tex);
 	glUniform1i(glGetUniformLocation(g_program, "our_tex"), 0);
+
+	glm::mat4 trans;
+	trans = glm::translate(trans, glm::vec3(0.5f, -0.5f, 0.0f));
+	trans = glm::rotate(trans,glm::radians((GLfloat)SDL_GetTicks() * 50.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+	GLuint transformLoc = glGetUniformLocation(g_program, "transform");
+	glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(trans));
 
 	glBindVertexArray(g_vao);
 	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);

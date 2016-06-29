@@ -18,7 +18,7 @@ void init();
 void init_sdl();
 
 int
-main(int argc, char** argv)
+main()
 {
 	bool running = true;
 	SDL_Event e;

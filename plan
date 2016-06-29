@@ -2,6 +2,9 @@ TODO_NEW:
 	-imgui
 	-camera
 	-input
+	-3d
+	-scripting
+	-lighting
 
 TODO_BUGS:
 
@@ -12,3 +15,7 @@ DONE:
 	Tue Jun 28 08:16:21 EDT 2016
 	+texture
 	+c++ garbage
+
+	Wed Jun 29 00:23:23 EDT 2016
+	
+	
