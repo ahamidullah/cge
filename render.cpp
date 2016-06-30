@@ -9,12 +9,48 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-static GLfloat g_verts[] = {
-	// Positions          // Colors           // Texture Coords
-	0.5f,  0.5f, 0.0f,   1.0f, 0.0f, 0.0f,   1.0f, 1.0f,   // Top Right
-	0.5f, -0.5f, 0.0f,   0.0f, 1.0f, 0.0f,   1.0f, 0.0f,   // Bottom Right
-	-0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 0.0f,   // Bottom Left
-	-0.5f,  0.5f, 0.0f,   1.0f, 1.0f, 0.0f,   0.0f, 1.0f    // Top Left
+GLfloat g_verts[] = {
+    -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
+     0.5f, -0.5f, -0.5f,  1.0f, 0.0f,
+     0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
+     0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
+    -0.5f,  0.5f, -0.5f,  0.0f, 1.0f,
+    -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
+
+    -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
+     0.5f, -0.5f,  0.5f,  1.0f, 0.0f,
+     0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
+     0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
+    -0.5f,  0.5f,  0.5f,  0.0f, 1.0f,
+    -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
+
+    -0.5f,  0.5f,  0.5f,  1.0f, 0.0f,
+    -0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
+    -0.5f, -0.5f, -0.5f,  0.0f, 1.0f,
+    -0.5f, -0.5f, -0.5f,  0.0f, 1.0f,
+    -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
+    -0.5f,  0.5f,  0.5f,  1.0f, 0.0f,
+
+     0.5f,  0.5f,  0.5f,  1.0f, 0.0f,
+     0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
+     0.5f, -0.5f, -0.5f,  0.0f, 1.0f,
+     0.5f, -0.5f, -0.5f,  0.0f, 1.0f,
+     0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
+     0.5f,  0.5f,  0.5f,  1.0f, 0.0f,
+
+    -0.5f, -0.5f, -0.5f,  0.0f, 1.0f,
+     0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
+     0.5f, -0.5f,  0.5f,  1.0f, 0.0f,
+     0.5f, -0.5f,  0.5f,  1.0f, 0.0f,
+    -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
+    -0.5f, -0.5f, -0.5f,  0.0f, 1.0f,
+
+    -0.5f,  0.5f, -0.5f,  0.0f, 1.0f,
+     0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
+     0.5f,  0.5f,  0.5f,  1.0f, 0.0f,
+     0.5f,  0.5f,  0.5f,  1.0f, 0.0f,
+    -0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
+    -0.5f,  0.5f, -0.5f,  0.0f, 1.0f
 };
 static GLuint g_indices[] = {
 	0, 1, 3,
@@ -24,37 +60,101 @@ static GLuint g_vao, g_vbo, g_ebo;
 static GLuint g_program;
 static GLuint g_tex;
 
-void init_glew();
-void init_gl(const int screen_width, const int screen_height);
-void init_shaders();
-void init_buffers();
-GLuint make_program(const std::vector<std::string>& shader_strs);
-GLuint make_shader(const GLenum shader_type, std::string shader_str);
-void load_textures();
+internal void init_glew();
+internal void init_gl(const int screen_width, const int screen_height);
+internal void init_shaders();
+internal void init_buffers();
+internal GLuint make_program(const std::vector<std::string>& shader_strs);
+internal GLuint make_shader(const GLenum shader_type, std::string shader_str);
+internal void load_textures();
 
 namespace render {
 
 void
-init(const int screen_width, const int screen_height)
+init(const int screenw, const int screenh)
 {
-	init_gl(screen_width, screen_height);
+	init_gl(screenw, screenh);
 	load_textures();
-}
 
+	glUseProgram(g_program);
+
+	// set frag shader's sampler2d to the desired texture unit
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, g_tex);
+	glUniform1i(glGetUniformLocation(g_program, "our_tex"), 0);
+
+	glm::mat4 model;
+	model = glm::rotate(model, glm::radians(-55.0f), glm::vec3(1.0f, 0.0f, 0.0f)); 
+	glm::mat4 view;
+	view = glm::translate(view, glm::vec3(0.0f, 0.0f, -3.0f)); 
+	glm::mat4 projection;
+	projection = glm::perspective(glm::radians(45.0f), (float)(screenw / screenh), 0.1f, 100.0f);
+
+	GLint modelLoc = glGetUniformLocation(g_program, "model");
+	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+	GLuint viewLoc = glGetUniformLocation(g_program, "view");
+	glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+	GLuint projectionLoc = glGetUniformLocation(g_program, "projection");
+	glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
+
+	glUseProgram(0);
 }
 
 void
+render(int screenw, int screenh)
+{
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glUseProgram(g_program);
+
+	glm::mat4 model;
+	model = glm::rotate(model, glm::radians((GLfloat)SDL_GetTicks()/10.0f), glm::vec3(1.0f, 0.3f, 0.5f));
+
+	GLint modelLoc = glGetUniformLocation(g_program, "model");
+	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+
+
+/*	// set frag shader's sampler2d to the desired texture unit
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, g_tex);
+	glUniform1i(glGetUniformLocation(g_program, "our_tex"), 0);
+
+	glm::mat4 model;
+	model = glm::rotate(model, glm::radians((GLfloat)SDL_GetTicks()), glm::vec3(0.5f, 1.0f, 0.0f));
+	glm::mat4 view;
+	view = glm::translate(view, glm::vec3(0.0f, 0.0f, -3.0f)); 
+	glm::mat4 projection;
+	projection = glm::perspective(glm::radians(45.0f), (float)(screenw / screenh), 0.1f, 100.0f);
+
+	GLint modelLoc = glGetUniformLocation(g_program, "model");
+	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+	GLuint viewLoc = glGetUniformLocation(g_program, "view");
+	glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+	GLuint projectionLoc = glGetUniformLocation(g_program, "projection");
+	glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
+*/
+	glBindVertexArray(g_vao);
+//	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+	glDrawArrays(GL_TRIANGLES, 0, 36);
+	glBindVertexArray(0);
+
+	glUseProgram(0);
+}
+
+}
+
+internal void
 init_gl(const int screen_width, const int screen_height)
 {
 	init_glew();
 	init_shaders();
 	init_buffers();
-
+	
+	glEnable(GL_DEPTH_TEST);
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 	glViewport(0, 0, screen_width, screen_height);
 }
 
-void
+internal void
 init_glew()
 {
 	glewExperimental = true;
@@ -65,14 +165,14 @@ init_glew()
 }
 
 /*fill g_program with the shader program*/
-void
+internal void
 init_shaders()
 {
 	const std::vector<std::string> shader_strs { zlib::load_file("shader.vert"), zlib::load_file("shader.frag") }; // ORDER MATTERS FOR NOW
 	g_program = make_program(shader_strs);
 }
 
-void
+internal void
 init_buffers()
 {
 	glGenVertexArrays(1, &g_vao);
@@ -85,12 +185,12 @@ init_buffers()
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_ebo);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(g_indices), g_indices, GL_STATIC_DRAW);
 
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8*sizeof(GLfloat), 0);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8*sizeof(GLfloat), (GLvoid*)(3*sizeof(GLfloat)));
-	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8*sizeof(GLfloat), (GLvoid*)(6*sizeof(GLfloat)));
-	glEnableVertexAttribArray(2);
+    // Position attribute
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (GLvoid*)0);
+    glEnableVertexAttribArray(0);
+    // TexCoord attribute
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (GLvoid*)(3 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(2);
 
 	glBindVertexArray(0);
 }
@@ -112,7 +212,7 @@ init_buffers()
 	}\
 }
 
-GLuint
+internal GLuint
 make_program(const std::vector<std::string>& shader_strs)
 {
 	const std::vector<GLuint> shaders { make_shader(GL_VERTEX_SHADER, shader_strs[0]),
@@ -132,7 +232,7 @@ make_program(const std::vector<std::string>& shader_strs)
 	return program;
 }
 
-GLuint
+internal GLuint
 make_shader(const GLenum shader_type, const std::string shader_str)
 {
 	const GLuint shader = glCreateShader(shader_type);
@@ -153,49 +253,47 @@ make_shader(const GLenum shader_type, const std::string shader_str)
 	return shader;
 }
 
-SDL_Surface *
-flip_surface(SDL_Surface*& s)
+internal SDL_Surface *
+load_surface(const char *fname)
 {
-	auto getpixel = [] (SDL_Surface *surface, int x, int y) {
-		u32 *pixels = (u32 *)surface->pixels;
-		return pixels[(y * surface->w) + x];
-	};
-
-	auto putpixel = [] (SDL_Surface *surface, int x, int y, Uint32 pixel) {
-		u32 *pixels = (u32 *)surface->pixels;
-		pixels[(y * surface->w) + x] = pixel;
-	};
-
-	SDL_Surface* flip = SDL_CreateRGBSurface(0, (s)->w, s->h, s->format->BitsPerPixel, s->format->Rmask, s->format->Gmask, s->format->Bmask, s->format->Amask);
-	
-	for(int y=0; y<s->h; y++)
+	auto flip_surface_x = [] (SDL_Surface* s)
 	{
-		for(int x=0; x<s->w; x++)
+		auto getpixel = [] (SDL_Surface *surface, int x, int y)
 		{
-			//copy pixels, but reverse the x pixels!
-			putpixel(flip, x, y, getpixel(s, x, s->h - y - 1));
+			u32 *pixels = (u32 *)surface->pixels;
+			return pixels[(y * surface->w) + x];
+		};
+		auto putpixel = [] (SDL_Surface *surface, int x, int y, Uint32 pixel)
+		{
+			u32 *pixels = (u32 *)surface->pixels;
+			pixels[(y * surface->w) + x] = pixel;
+		};
+
+		SDL_Surface* flip = SDL_CreateRGBSurface(0, (s)->w, s->h, s->format->BitsPerPixel, s->format->Rmask, s->format->Gmask, s->format->Bmask, s->format->Amask);	
+		for(int y=0; y<s->h; y++) {
+			for(int x=0; x<s->w; x++) {
+				//copy pixels, but reverse the x pixels
+				putpixel(flip, x, y, getpixel(s, x, s->h - y - 1));
+			}
 		}
-	}
+		return flip;
+	};
 
-	SDL_FreeSurface(s);
-	s = flip;
-	return flip;
-}
-
-SDL_Surface *load_surface(const char *fname)
-{
 	SDL_Surface *surface;
 	if (!(surface = IMG_Load(fname))) {
 		zlib::PRINTERR("IMG_Load failed! IMG_GetError: %s\n", IMG_GetError);
 	}
-	return surface;
+
+	//opengl wants the origin on the bottom, so we flip it on the x axis
+	SDL_Surface *flip = flip_surface_x(surface);
+	SDL_FreeSurface(surface);
+	return flip;
 }
 
-void
+internal void
 load_textures()
 {
 	SDL_Surface *surface = load_surface("sample2.png");
-	surface = flip_surface(surface);
 
 	glGenTextures(1, &g_tex);
 	glBindTexture(GL_TEXTURE_2D, g_tex);
@@ -211,34 +309,3 @@ load_textures()
 	SDL_FreeSurface(surface);
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
-
-namespace render {
-
-void
-render()
-{
-
-	glClear(GL_COLOR_BUFFER_BIT);
-	glUseProgram(g_program);
-
-	// set frag shader's sampler2d to the desired texture unit
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, g_tex);
-	glUniform1i(glGetUniformLocation(g_program, "our_tex"), 0);
-
-	glm::mat4 trans;
-	trans = glm::translate(trans, glm::vec3(0.5f, -0.5f, 0.0f));
-	trans = glm::rotate(trans,glm::radians((GLfloat)SDL_GetTicks() * 50.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-
-	GLuint transformLoc = glGetUniformLocation(g_program, "transform");
-	glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(trans));
-
-	glBindVertexArray(g_vao);
-	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-	glBindVertexArray(0);
-
-	glUseProgram(0);
-}
-
-}
-

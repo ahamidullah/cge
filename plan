@@ -1,21 +1,19 @@
 TODO_NEW:
-	-imgui
+	-gui
 	-camera
 	-input
-	-3d
 	-scripting
 	-lighting
 
 TODO_BUGS:
 
 DONE:
-	Sun Jun 26 05:03:15 EDT 2016
+	/06/26/16 - Sun
 	+sdl
 
-	Tue Jun 28 08:16:21 EDT 2016
+	/06/28/16 - Tue
 	+texture
 	+c++ garbage
 
-	Wed Jun 29 00:23:23 EDT 2016
-	
-	
+	06/30/16 - Thu
+	+3d

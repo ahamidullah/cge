@@ -32,7 +32,7 @@ main()
 				break;
 			}
 		}
-		render::render();
+		render::render(SCREEN_WIDTH, SCREEN_HEIGHT);
 		SDL_GL_SwapWindow(g_window);
 	}
 	return 0;

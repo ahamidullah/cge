@@ -3,7 +3,7 @@
 
 namespace render {
 	void init(const int screen_widht, const int screen_height);
-	void render();
+	void render(int screenw, int screenh);
 }
 
 #endif

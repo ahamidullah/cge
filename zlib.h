@@ -3,6 +3,8 @@
 
 #include <string>
 
+#define internal static
+
 typedef unsigned int u32;
 typedef int s32;
 
