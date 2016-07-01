@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <tuple>
 #include "render.h"
 #include "zlib.h"
 #include <SDL2/SDL.h>
@@ -30,10 +31,8 @@ struct mouse {
 	GLfloat sensitivity;
 };
 
-static SDL_Window *g_window;
-static SDL_GLContext g_context;
 
-void init_sdl();
+std::tuple<SDL_Window*, SDL_GLContext> init_sdl();
 
 void
 keydown(const SDL_Keycode k, bool keys[])
@@ -54,10 +53,12 @@ iskeydown(const SDL_Keycode k, const bool keys[])
 }
 
 void
-mouse_move(s32 x, s32 y, mouse *m)
+mouse_move(const vec2 new_pos, mouse *m)
 {
-	m->pos.x = x;
-	m->pos.y = y;
+	m->last_pos.x = m->pos.x;
+	m->last_pos.y = m->pos.y;
+	m->pos.x = new_pos.x;
+	m->pos.y = new_pos.y;
 }
 
 void
@@ -94,21 +95,34 @@ update_camera(const mouse& m, const bool keys[], camera *cam)
 	}
 }
 
+void
+recenter_mouse(const vec2 new_pos, mouse *m)
+{
+	m->pos = new_pos;
+	m->last_pos = new_pos;
+}
+
 int
 main()
 {
+
+	SDL_Window *window;
+	SDL_GLContext context;
 	bool running = true;
 	SDL_Event e;
 	bool keys[256] = {0};
 	camera camera = { 0.0f, -90.0f, 0.05f, glm::vec3(0.0f, 0.0f,  3.0f), glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, 1.0f,  0.0f) };
 	mouse mouse = { {400, 300}, {400, 300}, 0.1f};
 
-	init_sdl();
+	std::tie(window, context) = init_sdl();
 	render::init(SCREEN_WIDTH, SCREEN_HEIGHT);
+
 	while(running) {
-		mouse.last_pos = mouse.pos;
+		vec2 new_mouse_pos = mouse.pos;
 
 		while(SDL_PollEvent(&e) != 0) {
+			SDL_GetMouseState(&new_mouse_pos.x, &new_mouse_pos.y);
+
 			switch (e.type) {
 			case SDL_QUIT:
 				running = false;
@@ -121,25 +135,26 @@ main()
 				break;
 			case SDL_WINDOWEVENT:
 				if (SDL_WINDOWEVENT_FOCUS_GAINED) {
-					mouse.last_pos = mouse.pos;
+					recenter_mouse(new_mouse_pos, &mouse);
 				}
 			}
-			int mousex, mousey;
-			SDL_GetMouseState(&mousex, &mousey);
-			mouse_move(mousex, mousey, &mouse);
 		}
+		mouse_move(new_mouse_pos, &mouse);
 		update_camera(mouse, keys, &camera);
 		glm::mat4 view;
 		view = glm::lookAt(camera.pos, camera.pos + camera.front, camera.up);
 		render::render(view);
-		SDL_GL_SwapWindow(g_window);
+		SDL_GL_SwapWindow(window);
 	}
 	return 0;
 }
 
-void
+std::tuple<SDL_Window*, SDL_GLContext>
 init_sdl()
 {
+	SDL_Window *win;
+	SDL_GLContext context;
+
 	int winflags = (SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
 	int imgflags = (IMG_INIT_PNG | IMG_INIT_JPG);
 
@@ -151,14 +166,15 @@ init_sdl()
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
-	if (!(g_window = SDL_CreateWindow("cge", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, winflags))) {
+	if (!(win = SDL_CreateWindow("cge", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, winflags))) {
 		zlib::ABORT("SDL could not create a window! SDL Error: %s\n", SDL_GetError());
 	}
 	//initialize PNG loading
 	if (!(IMG_Init(imgflags) & imgflags)) {
 		zlib::ABORT("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
 	}
-	if (!(g_context = SDL_GL_CreateContext(g_window))) {
+	if (!(context = SDL_GL_CreateContext(win))) {
 		zlib::ABORT("SDL could not create an OpenGL context! SDL Error: %s\n", SDL_GetError());
 	}
+	return std::make_tuple(win, context);
 }

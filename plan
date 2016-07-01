@@ -6,6 +6,7 @@ TODO_NEW:
 	-sound
 	-physics
 	-models
+	-real main loop
 
 TODO_BUGS:
 
