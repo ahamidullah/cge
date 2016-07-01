@@ -1,9 +1,11 @@
 TODO_NEW:
 	-gui
-	-camera
-	-input
 	-scripting
 	-lighting
+	-multithreading
+	-sound
+	-physics
+	-models
 
 TODO_BUGS:
 
@@ -17,3 +19,7 @@ DONE:
 
 	06/30/16 - Thu
 	+3d
+
+	07/01/16 - Fri
+	+camera
+	+input
