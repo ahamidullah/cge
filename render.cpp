@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include "render.h"
 
-static GLuint g_vao, g_ebo;
+static GLuint g_vao, g_ebo, g_ibo, g_vbo;
 static GLuint g_tex_lighting_prog, g_notex_lighting_prog, g_no_lighting_prog;
 static GLuint g_tex, g_spec_tex;
 static GLsizei num_indices;
@@ -53,28 +53,29 @@ struct Model_Load {
 void
 make_point_light(vec3f pos)
 {
-	glUseProgram(g_lighting_program);
+	// TODO: stick lighting data in a uniform buffer obj
+	glUseProgram(g_notex_lighting_prog);
 	for (int i = 0; i < max_pt_lights; ++i) {
 		if (!point_lights[i]) {
 			point_lights[i] = true;
 			char buf[256];
 			sprintf(buf, "point_lights[%d].is_valid", i);
 			printf("%s\n", buf);
-			glUniform1i(glGetUniformLocation(g_lighting_program, buf), true);
+			glUniform1i(glGetUniformLocation(g_notex_lighting_prog, buf), true);
 			sprintf(buf, "point_lights[%d].position", i);
-			glUniform3f(glGetUniformLocation(g_lighting_program, buf), pos.x, pos.y + 0.5f, pos.z);
+			glUniform3f(glGetUniformLocation(g_notex_lighting_prog, buf), pos.x, pos.y + 0.5f, pos.z);
 			sprintf(buf, "point_lights[%d].ambient", i);
-			glUniform3f(glGetUniformLocation(g_lighting_program, buf), 0.05f, 0.05f, 0.05f);
+			glUniform3f(glGetUniformLocation(g_notex_lighting_prog, buf), 0.05f, 0.05f, 0.05f);
 			sprintf(buf, "point_lights[%d].diffuse", i);
-			glUniform3f(glGetUniformLocation(g_lighting_program, buf), 0.8f, 0.8f, 0.8f);
+			glUniform3f(glGetUniformLocation(g_notex_lighting_prog, buf), 0.8f, 0.8f, 0.8f);
 			sprintf(buf, "point_lights[%d].specular", i);
-			glUniform3f(glGetUniformLocation(g_lighting_program, buf), 1.0f, 1.0f, 1.0f);
+			glUniform3f(glGetUniformLocation(g_notex_lighting_prog, buf), 1.0f, 1.0f, 1.0f);
 			sprintf(buf, "point_lights[%d].constant", i);
-			glUniform1f(glGetUniformLocation(g_lighting_program, buf), 1.0f);
+			glUniform1f(glGetUniformLocation(g_notex_lighting_prog, buf), 1.0f);
 			sprintf(buf, "point_lights[%d].linear", i);
-			glUniform1f(glGetUniformLocation(g_lighting_program, buf), 0.09);
+			glUniform1f(glGetUniformLocation(g_notex_lighting_prog, buf), 0.09);
 			sprintf(buf, "point_lights[%d].quadratic", i);
-			glUniform1f(glGetUniformLocation(g_lighting_program, buf), 0.032);
+			glUniform1f(glGetUniformLocation(g_notex_lighting_prog, buf), 0.032);
 			glUseProgram(0);
 			return;
 		}
@@ -122,34 +123,37 @@ load_model(const char *fname, std::vector<GLfloat> *verts, std::vector<GLfloat> 
 void
 init_uniforms(const int screenw, const int screenh)
 {
-	glUseProgram(g_lighting_program);
+	glUseProgram(g_notex_lighting_prog);
 	// material
-	glUniform1i(glGetUniformLocation(g_lighting_program, "material.diffuse"), 0);
-	glUniform1i(glGetUniformLocation(g_lighting_program, "material.specular"), 1);
-	glUniform1f(glGetUniformLocation(g_lighting_program, "material.shininess"), 64.0f);
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "material.ambient"),  1.0f, 0.5f, 0.31f);
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "material.diffuse"),  1.0f, 0.5f, 0.31f);
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "material.specular"), 0.5f, 0.5f, 0.5f);
+	// glUniform1i(glGetUniformLocation(g_notex_lighting_prog, "material.diffuse"), 0);
+	// glUniform1i(glGetUniformLocation(g_notex_lighting_prog, "material.specular"), 1);
+	glUniform1f(glGetUniformLocation(g_notex_lighting_prog, "material.shininess"), 64.0f);
 
 	// dir lights
-	glUniform3f(glGetUniformLocation(g_lighting_program, "dir_light.direction"), -0.2f, -1.0f, -0.3f);
-	glUniform3f(glGetUniformLocation(g_lighting_program, "dir_light.ambient"), 0.05f, 0.05f, 0.05f);
-	glUniform3f(glGetUniformLocation(g_lighting_program, "dir_light.diffuse"), 0.4f, 0.4f, 0.4f);
-	glUniform3f(glGetUniformLocation(g_lighting_program, "dir_light.specular"), 0.5f, 0.5f, 0.5f);
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "dir_light.direction"), -0.2f, -1.0f, -0.3f);
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "dir_light.ambient"), 0.05f, 0.05f, 0.05f);
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "dir_light.diffuse"), 0.4f, 0.4f, 0.4f);
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "dir_light.specular"), 0.5f, 0.5f, 0.5f);
 
 	for (int i = 0; i < max_pt_lights; ++i) {
 		char buf[256];
 		sprintf(buf, "point_lights[%d].is_valid", i);
-		glUniform1i(glGetUniformLocation(g_lighting_program, buf), false);
+		glUniform1i(glGetUniformLocation(g_notex_lighting_prog, buf), false);
 		point_lights[i] = false;
 	}
 
 	// spot light
-	glUniform3f(glGetUniformLocation(g_lighting_program, "spot_light.ambient"), 0.05f, 0.05f, 0.05f);
-	glUniform3f(glGetUniformLocation(g_lighting_program, "spot_light.diffuse"), 0.8f, 0.8f, 0.8f);
-	glUniform3f(glGetUniformLocation(g_lighting_program, "spot_light.specular"), 1.0f, 1.0f, 1.0f);
-	glUniform1f(glGetUniformLocation(g_lighting_program, "spot_light.constant"), 1.0f);
-	glUniform1f(glGetUniformLocation(g_lighting_program, "spot_light.linear"), 0.09);
-	glUniform1f(glGetUniformLocation(g_lighting_program, "spot_light.quadratic"), 0.032);
-	glUniform1f(glGetUniformLocation(g_lighting_program, "spot_light.inner_cutoff"), glm::cos(glm::radians(12.5f)));
-	glUniform1f(glGetUniformLocation(g_lighting_program, "spot_light.outer_cutoff"), glm::cos(glm::radians(17.5f)));
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "spot_light.ambient"), 0.05f, 0.05f, 0.05f);
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "spot_light.diffuse"), 0.8f, 0.8f, 0.8f);
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "spot_light.specular"), 1.0f, 1.0f, 1.0f);
+	glUniform1f(glGetUniformLocation(g_notex_lighting_prog, "spot_light.constant"), 1.0f);
+	glUniform1f(glGetUniformLocation(g_notex_lighting_prog, "spot_light.linear"), 0.09);
+	glUniform1f(glGetUniformLocation(g_notex_lighting_prog, "spot_light.quadratic"), 0.032);
+	glUniform1f(glGetUniformLocation(g_notex_lighting_prog, "spot_light.inner_cutoff"), glm::cos(glm::radians(12.5f)));
+	glUniform1f(glGetUniformLocation(g_notex_lighting_prog, "spot_light.outer_cutoff"), glm::cos(glm::radians(17.5f)));
 
 	glUseProgram(0);
 }
@@ -179,16 +183,17 @@ void
 render(Camera cam)
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	glUseProgram(g_lamp_program);
+	glUseProgram(g_notex_lighting_prog);
 	glm::mat4 view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
 	glm::mat4 projection = glm::perspective(45.0f, (GLfloat)800 / (GLfloat)600, 0.1f, 100.0f);
-	glUniformMatrix4fv(glGetUniformLocation(g_lamp_program, "view"), 1, GL_FALSE, glm::value_ptr(view));
-	glUniformMatrix4fv(glGetUniformLocation(g_lamp_program, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-	GLint model_loc = glGetUniformLocation(g_lamp_program, "model");
+	glUniformMatrix4fv(glGetUniformLocation(g_notex_lighting_prog, "u_view"), 1, GL_FALSE, glm::value_ptr(view));
+	glUniformMatrix4fv(glGetUniformLocation(g_notex_lighting_prog, "u_projection"), 1, GL_FALSE, glm::value_ptr(projection));
+	glUniform3f(glGetUniformLocation(g_notex_lighting_prog, "u_view_pos"), cam.pos.x, cam.pos.y, cam.pos.z);
+	GLint model_loc = glGetUniformLocation(g_notex_lighting_prog, "u_model");
 	glm::mat4 model;
 	model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
 	model = glm::scale(model, glm::vec3(0.1f));
-	glBindVertexArray(g_container_vao);
+	glBindVertexArray(g_vao);
 	glUniformMatrix4fv(model_loc, 1, GL_FALSE, glm::value_ptr(model));
 	glDrawElements(GL_TRIANGLES, num_indices, GL_UNSIGNED_INT, 0);
 	glBindVertexArray(0);
@@ -334,22 +339,29 @@ make_program(const char *vert, const char *frag)
 static void
 init_shaders()
 {
-	const char *light_vert = z_load_file("lighting.vert");
-	assert(light_vert);
-	const char *light_frag = z_load_file("lighting.frag");
-	assert(light_frag);
-	const char *lamp_vert = z_load_file("lamp.vert");
-	assert(lamp_vert);
-	const char *lamp_frag = z_load_file("lamp.frag");
-	assert(light_frag);
+	const char *tl_vert = z_load_file("tex_lighting.vert");
+	assert(tl_vert);
+	const char *tl_frag = z_load_file("tex_lighting.frag");
+	assert(tl_frag);
+	const char *ntl_vert = z_load_file("notex_lighting.vert");
+	assert(ntl_vert);
+	const char *ntl_frag = z_load_file("notex_lighting.frag");
+	assert(ntl_frag);
+	const char *nl_vert = z_load_file("no_lighting.vert");
+	assert(nl_vert);
+	const char *nl_frag = z_load_file("no_lighting.frag");
+	assert(nl_frag);
 
-	g_lighting_program = make_program(light_vert, light_frag);
-	g_lamp_program = make_program(lamp_vert, lamp_frag);
+	g_tex_lighting_prog = make_program(tl_vert, tl_frag);
+	g_no_lighting_prog = make_program(nl_vert, nl_frag);
+	g_notex_lighting_prog = make_program(ntl_vert, ntl_frag);
 
-	delete [] light_vert;
-	delete [] light_frag;
-	delete [] lamp_vert;
-	delete [] lamp_frag;
+	delete [] tl_vert;
+	delete [] tl_frag;
+	delete [] ntl_vert;
+	delete [] ntl_frag;
+	delete [] nl_vert;
+	delete [] nl_frag;
 }
 /*
 	GLfloat cube_verts[] = {
@@ -417,31 +429,37 @@ init_buffers()
 	std::vector<GLfloat> normals;
 	std::vector<GLuint> indices;
 	succ = load_model("teapot.obj", &verts, &normals, &indices); //TODO: get rid of the output arguments
-
 	num_indices = indices.size();
-	// First, set the container's VAO (and VBO)
-	//GLuint vaos[3];
-	glGenVertexArrays(1, &g_container_vao);
+	glGenVertexArrays(1, &g_vao);
 	//g_lamp_vao = vaos[0];
 	//g_container_vao = vaos[1];
 	//g_plane_vao = vaos[2];
 
-	GLuint vbos[2];
+	GLuint vert_vbo, norm_vbo, ind_vbo;
 	//glGenBuffers(z_arr_len(vbos), vbos);
- 	glGenBuffers(1, &g_cube_vbo);
+ 	//glGenBuffers(1, &g_ibo);
 	//g_cube_vbo = vbos[0];
 	//g_plane_vbo = vbos[1];
-	glGenBuffers(1, &g_ebo);
-
-	//glBindBuffer(GL_ARRAY_BUFFER, g_cube_vbo);
-	//glBufferData(GL_ARRAY_BUFFER, sizeof(cube_verts), cube_verts, GL_STATIC_DRAW);
-	glBindVertexArray(g_container_vao);
-	glBindBuffer(GL_ARRAY_BUFFER, g_cube_vbo);
+ 	glGenBuffers(1, &vert_vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, vert_vbo);
 	glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(GLfloat), verts.data(), GL_STATIC_DRAW);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_ebo);
+	glGenBuffers(1, &norm_vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, norm_vbo);
+	glBufferData(GL_ARRAY_BUFFER, normals.size() * sizeof(GLfloat), normals.data(), GL_STATIC_DRAW);
+	glGenBuffers(1, &ind_vbo);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ind_vbo);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
+
+	glBindVertexArray(g_vao);
+	glBindBuffer(GL_ARRAY_BUFFER, vert_vbo);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
+	glBindBuffer(GL_ARRAY_BUFFER, norm_vbo);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
+
 	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ind_vbo);
+
 	glBindVertexArray(0);
 
 /***********

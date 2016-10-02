@@ -107,14 +107,15 @@ void main()
 			}
 		}
 	}
+
 	// spot light
 	{
 		vec3 spot_recv_dir = normalize(spot_light.position - t_frag_pos);
 		float intensity = calc_intensity(spot_recv_dir, spot_light.direction, spot_light.inner_cutoff, spot_light.outer_cutoff);
-		/*spot_result = (calc_ambient(spot_light.ambient) +
+		spot_result = (calc_ambient(spot_light.ambient) +
 				(calc_diffuse(spot_light.diffuse, spot_recv_dir) * intensity) +
 				(calc_specular(spot_light.specular, spot_recv_dir, view_dir) * intensity)) *
-				calc_attenuation(spot_light.position, spot_light.constant, spot_light.linear, spot_light.quadratic);*/
+				calc_attenuation(spot_light.position, spot_light.constant, spot_light.linear, spot_light.quadratic);
 	}
 
 	t_color = vec4(amb_result + pt_result + spot_result, 1.0);
