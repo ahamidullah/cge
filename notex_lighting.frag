@@ -11,7 +11,7 @@ struct Material {
 	vec3 specular;
 	float shininess;
 };
-uniform Material material;
+uniform Material mat;
 
 struct Dir_Light {
 	vec3 direction;
@@ -19,7 +19,7 @@ struct Dir_Light {
 	vec3 diffuse;
 	vec3 specular;
 };
-uniform Dir_Light dir_light;
+uniform Dir_Light dir;
 
 struct Spot_Light {
 	vec3 position;
@@ -34,7 +34,7 @@ struct Spot_Light {
 	float linear;
 	float quadratic;
 };
-uniform Spot_Light spot_light;
+uniform Spot_Light spot;
 
 #define MAX_NUM_PT_LIGHTS 4
 struct Point_Light {    
@@ -49,24 +49,24 @@ struct Point_Light {
 	vec3 diffuse;
 	vec3 specular;
 };
-uniform Point_Light point_lights[MAX_NUM_PT_LIGHTS];
+uniform Point_Light points[MAX_NUM_PT_LIGHTS];
 
-vec3 calc_ambient(vec3 light_ambient)
+vec3 calc_ambient(vec3 intensity)
 {
-	return light_ambient * material.ambient;
+	return intensity * mat.ambient;
 }
 
-vec3 calc_diffuse(vec3 light_diffuse, vec3 recv_dir)
+vec3 calc_diffuse(vec3 intensity, vec3 recv_dir)
 {
-	float diffuse_impact = max(dot(t_normal, recv_dir), 0.0f);
-	return light_diffuse * diffuse_impact * material.diffuse;
+	float impact = max(dot(t_normal, recv_dir), 0.0f);
+	return intensity * impact * mat.diffuse;
 }
 
-vec3 calc_specular(vec3 light_specular, vec3 recv_dir, vec3 view_dir)
+vec3 calc_specular(vec3 intensity, vec3 recv_dir, vec3 view_dir)
 {
 	vec3 reflect_dir = reflect(-recv_dir, t_normal);
-	float specular_impact = pow(max(dot(view_dir, reflect_dir), 0.0), material.shininess);
-	return light_specular * specular_impact * material.specular;
+	float impact = pow(max(dot(view_dir, reflect_dir), 0.0), mat.shininess);
+	return intensity * impact * mat.specular;
 }
 
 float calc_attenuation(vec3 light_pos, float constant, float linear, float quadratic)
@@ -89,33 +89,33 @@ void main()
 
 	// directional lighting
 	{
-		vec3 amb_recv_dir = normalize(-dir_light.direction);
-		amb_result = calc_ambient(dir_light.ambient) +
-		             calc_diffuse(dir_light.diffuse, amb_recv_dir) +
-		             calc_specular(dir_light.specular, amb_recv_dir, view_dir);
+		vec3 amb_recv_dir = normalize(-dir.direction);
+		amb_result = calc_ambient(dir.ambient) +
+		             calc_diffuse(dir.diffuse, amb_recv_dir) +
+		             calc_specular(dir.specular, amb_recv_dir, view_dir);
 	}
 	// point lights
 	{
 		vec3 pt_recv_dir;
 		for (int i = 0; i < MAX_NUM_PT_LIGHTS; i++) {
-			if (point_lights[i].is_valid) {
-				pt_recv_dir = normalize(point_lights[i].position - t_frag_pos);
-				pt_result += (calc_ambient(point_lights[i].ambient) +
-						calc_diffuse(point_lights[i].diffuse, pt_recv_dir) +
-						calc_specular(point_lights[i].specular, pt_recv_dir, view_dir)) *
-						calc_attenuation(point_lights[i].position, point_lights[i].constant, point_lights[i].linear, point_lights[i].quadratic);
+			if (points[i].is_valid) {
+				pt_recv_dir = normalize(points[i].position - t_frag_pos);
+				pt_result += (calc_ambient(points[i].ambient) +
+						calc_diffuse(points[i].diffuse, pt_recv_dir) +
+						calc_specular(points[i].specular, pt_recv_dir, view_dir)) *
+						calc_attenuation(points[i].position, points[i].constant, points[i].linear, points[i].quadratic);
 			}
 		}
 	}
 
 	// spot light
 	{
-		vec3 spot_recv_dir = normalize(spot_light.position - t_frag_pos);
-		float intensity = calc_intensity(spot_recv_dir, spot_light.direction, spot_light.inner_cutoff, spot_light.outer_cutoff);
-		spot_result = (calc_ambient(spot_light.ambient) +
-				(calc_diffuse(spot_light.diffuse, spot_recv_dir) * intensity) +
-				(calc_specular(spot_light.specular, spot_recv_dir, view_dir) * intensity)) *
-				calc_attenuation(spot_light.position, spot_light.constant, spot_light.linear, spot_light.quadratic);
+		vec3 spot_recv_dir = normalize(spot.position - t_frag_pos);
+		float intensity = calc_intensity(spot_recv_dir, spot.direction, spot.inner_cutoff, spot.outer_cutoff);
+		spot_result = (calc_ambient(spot.ambient) +
+				(calc_diffuse(spot.diffuse, spot_recv_dir) * intensity) +
+				(calc_specular(spot.specular, spot_recv_dir, view_dir) * intensity)) *
+				calc_attenuation(spot.position, spot.constant, spot.linear, spot.quadratic);
 	}
 
 	t_color = vec4(amb_result + pt_result + spot_result, 1.0);

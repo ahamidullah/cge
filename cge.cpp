@@ -205,6 +205,7 @@ process_input(Keyboard *kb, Mouse *m, const Camera &cam)
 				break;
 			case SDL_MOUSEBUTTONDOWN: 
 			{
+				// ray cast to make a point light
 				float x = (2.0f * e.button.x) / SCREEN_WIDTH - 1.0f;
 				float y = 1.0f - (2.0f * e.button.y) / SCREEN_HEIGHT;
 				glm::vec4 ray_clip = glm::vec4(x, y, -1.0f, 1.0f);
@@ -214,13 +215,8 @@ process_input(Keyboard *kb, Mouse *m, const Camera &cam)
 				glm::mat4 view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
 				glm::vec3 ray_world = glm::normalize((glm::inverse(view) * ray_eye).xyz());
 				float t = -(glm::dot(cam.pos, glm::vec3(0.0f, 1.0f, 0.0f)) / glm::dot(ray_world, glm::vec3(0.0f, 1.0f, 0.0f)));
-				glm::vec3 n = glm::vec3(0.0f, 1.0f, 0.0f);
-				//glm::vec3 t = (-n * cam.pos) / (n * ray_world);
-				//glm::vec3 yy = (cam.pos * glm::vec3(0.0f, 1.0f, 0.0f) + cam.pos);
-				//glm::vec3 xx = (ray_world * glm::vec3(0.0f, 1.0f, 0.0f));
 				glm::vec3 pos = cam.pos + ray_world * t;
 				make_point_light({ pos.x, pos.y, pos.z });
-				printf("%f, %f, %f\n", pos.x, pos.y, pos.z);
 				break;
 			}
 			case SDL_MOUSEBUTTONUP:
