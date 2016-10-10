@@ -12,6 +12,7 @@
 #include "render.h"
 
 struct Render_Info {
+	glm::vec3 pos;
 	GLuint vao;
 	GLuint ibo;
 	size_t num_indices;
@@ -88,13 +89,13 @@ load_model_info(const char *fname, Model_Info *mi)
 	for (uint64_t i = 0; data[i]; ++i) {
 		if (data[i] == 'v') {
 			if (data[i+1] == 't')
-				++num_texcs;
+				num_texcs += 2;
 			else if (data[i+1] == 'n')
-				++num_norms;
+				num_norms += 3;
 			else if (data[i+1] == ' ')
-				++num_verts;
+				num_verts += 3;
 		} else if (data[i] == 'f') {
-			++num_inds;
+			num_inds += 3;
 		}
 	}
 
@@ -105,8 +106,8 @@ load_model_info(const char *fname, Model_Info *mi)
 
 	// second pass loads the data
 	for (uint64_t i = 0; data[i]; ++i) {
-		if (data[i] == 'v') { // vertex
-			if (data[i+1] == 't') { // tex coord
+		if (data[i] == 'v') {
+			if (data[i+1] == 't') {
 				GLfloat t1, t2;
 				if (sscanf(&data[i+2], "%f %f", &t1, &t2) < 2) {
 					z_log_err("obj parser error in file %s\n", fname);
