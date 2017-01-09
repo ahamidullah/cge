@@ -6,7 +6,6 @@
 #include <SDL2/SDL_image.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <tuple>
 #include <memory>
 #include <stdint.h>
 #include "render.h"
@@ -18,12 +17,14 @@ struct Render_Info {
 	size_t num_indices;
 };
 
-static GLuint g_tex_lighting_prog, g_notex_lighting_prog, g_no_lighting_prog;
+static GLuint g_tex_prog, g_notex_prog, g_nolight_prog, g_vert_ubo, g_frag_ubo;
 static GLuint g_tex, g_spec_tex;
-static std::vector<Render_Info> g_render_group;
+static std::vector<Render_Info> g_render_group, g_notex_render_group, g_nolight_render_group;
+
+glm::mat4 g_projection_mat;
+glm::mat4 g_view_mat;
 
 static void init_glew();
-static void init_gl(const int screen_width, const int screen_height);
 static void init_shaders();
 static void init_buffers();
 static void load_textures();
@@ -32,39 +33,40 @@ constexpr int max_pt_lights = 4;
 bool points[max_pt_lights];
 
 void
-make_point_light(vec3f pos)
+mk_point_light(glm::vec3 pos)
 {
 	// TODO: stick lighting data in a uniform buffer obj
-	glUseProgram(g_tex_lighting_prog);
-	for (int i = 0; i < max_pt_lights; ++i) {
-		if (!points[i]) {
-			points[i] = true;
-			char buf[256];
-			sprintf(buf, "points[%d].is_valid", i);
-			glUniform1i(glGetUniformLocation(g_tex_lighting_prog, buf), true);
-			sprintf(buf, "points[%d].position", i);
-			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), pos.x, pos.y + 0.5f, pos.z);
-			sprintf(buf, "points[%d].ambient", i);
-			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.05f, 0.05f, 0.05f);
-			sprintf(buf, "points[%d].diffuse", i);
-			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.8f, 0.8f, 0.8f);
-			sprintf(buf, "points[%d].specular", i);
-			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), 1.0f, 1.0f, 1.0f);
-			sprintf(buf, "points[%d].constant", i);
-			glUniform1f(glGetUniformLocation(g_tex_lighting_prog, buf), 1.0f);
-			sprintf(buf, "points[%d].linear", i);
-			glUniform1f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.09);
-			sprintf(buf, "points[%d].quadratic", i);
-			glUniform1f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.032);
-			glUseProgram(0);
-			return;
-		}
-	}
-	z_log_err("Max point lights reached!");
-	glUseProgram(0);
+//	glUseProgram(g_tex_lighting_prog);
+//	for (int i = 0; i < max_pt_lights; ++i) {
+//		if (!points[i]) {
+//			points[i] = true;
+//			char buf[256];
+//			sprintf(buf, "points[%d].is_valid", i);
+//			glUniform1i(glGetUniformLocation(g_tex_lighting_prog, buf), true);
+//			sprintf(buf, "points[%d].position", i);
+//			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), pos.x, pos.y + 0.5f, pos.z);
+//			sprintf(buf, "points[%d].ambient", i);
+//			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.05f, 0.05f, 0.05f);
+//			sprintf(buf, "points[%d].diffuse", i);
+//			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.8f, 0.8f, 0.8f);
+//			sprintf(buf, "points[%d].specular", i);
+//			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), 1.0f, 1.0f, 1.0f);
+//			sprintf(buf, "points[%d].constant", i);
+//			glUniform1f(glGetUniformLocation(g_tex_lighting_prog, buf), 1.0f);
+//			sprintf(buf, "points[%d].linear", i);
+//			glUniform1f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.09);
+//			sprintf(buf, "points[%d].quadratic", i);
+//			glUniform1f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.032);
+//			glUseProgram(0);
+//			return;
+//		}
+//	}
+//	z_log_err("Max point lights reached!");
+//	glUseProgram(0);
 }
 
 struct Model_Info {
+	std::optional<std::string> tex_fname;
 	std::vector<GLfloat> vertices;
 	std::vector<GLfloat> tex_coords;
 	std::vector<GLfloat> normals;
@@ -80,7 +82,6 @@ load_model_info(const char *fname, Model_Info *mi)
 		return false;
 	const std::string &data = load.value();
 
-	// first pass gets counts
 	size_t num_verts = 0;
 	size_t num_norms = 0;
 	size_t num_inds = 0;
@@ -97,15 +98,25 @@ load_model_info(const char *fname, Model_Info *mi)
 		} else if (data[i] == 'f') {
 			num_inds += 3;
 		}
+		while (data[i] && data[i] != '\n') ++i;
 	}
 
 	mi->vertices.reserve(num_verts);
 	mi->normals.reserve(num_norms);
 	mi->indices.reserve(num_inds);
 	mi->tex_coords.reserve(num_texcs);
-
-	// second pass loads the data
+	mi->tex_fname = {};
+		
 	for (uint64_t i = 0; data[i]; ++i) {
+		if (data[i] == 't' && data[i+1] == 'f') {
+			char tex[256];
+			// doesn't work if texture filename has spaces...
+			if (sscanf(&data[i], "tf %s", tex) < 1) {
+				z_log_err("obj parser error: could not parse texture file name in file %s\n", fname);
+				return false;
+			}
+			mi->tex_fname = std::string(tex);
+		}
 		if (data[i] == 'v') {
 			if (data[i+1] == 't') {
 				GLfloat t1, t2;
@@ -139,67 +150,257 @@ load_model_info(const char *fname, Model_Info *mi)
 }
 
 void
-init_uniforms(const int screenw, const int screenh)
+init_uniforms()
 {
-	glUseProgram(g_tex_lighting_prog);
+	glUseProgram(g_tex_prog);
 	// mat
-	glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "mat.ambient"),  1.0f, 0.5f, 0.31f);
-	//glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "mat.diffuse"),  1.0f, 0.5f, 0.31f);
-	//glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "mat.specular"), 0.5f, 0.5f, 0.5f);
-	glUniform1i(glGetUniformLocation(g_tex_lighting_prog, "mat.diffuse"), 0);
-	//glUniform1i(glGetUniformLocation(g_tex_lighting_prog, "mat.specular"), 1);
-	glUniform1f(glGetUniformLocation(g_tex_lighting_prog, "mat.shininess"), 64.0f);
+	glUniform3f(glGetUniformLocation(g_tex_prog, "mat.ambient"),  1.0f, 0.5f, 0.31f);
+	//glUniform3f(glGetUniformLocation(g_tex_prog, "mat.diffuse"),  1.0f, 0.5f, 0.31f);
+	//glUniform3f(glGetUniformLocation(g_tex_prog, "mat.specular"), 0.5f, 0.5f, 0.5f);
+	glUniform1i(glGetUniformLocation(g_tex_prog, "mat.diffuse"), 0);
+	//glUniform1i(glGetUniformLocation(g_tex_prog, "mat.specular"), 1);
+	glUniform1f(glGetUniformLocation(g_tex_prog, "mat.shininess"), 64.0f);
 
 	// dir lights
-	glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "dir.direction"), -0.2f, -1.0f, -0.3f);
-	glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "dir.ambient"), 0.05f, 0.05f, 0.05f);
-	glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "dir.diffuse"), 0.4f, 0.4f, 0.4f);
-	glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "dir.specular"), 0.5f, 0.5f, 0.5f);
+	glUniform3f(glGetUniformLocation(g_tex_prog, "dir.direction"), -0.2f, -1.0f, -0.3f);
+	glUniform3f(glGetUniformLocation(g_tex_prog, "dir.ambient"), 0.05f, 0.05f, 0.05f);
+	glUniform3f(glGetUniformLocation(g_tex_prog, "dir.diffuse"), 0.4f, 0.4f, 0.4f);
+	glUniform3f(glGetUniformLocation(g_tex_prog, "dir.specular"), 0.5f, 0.5f, 0.5f);
 
 	// pt lights
 	for (int i = 0; i < max_pt_lights; ++i) {
 		char buf[256];
 		sprintf(buf, "points[%d].is_valid", i);
-		glUniform1i(glGetUniformLocation(g_tex_lighting_prog, buf), false);
+		glUniform1i(glGetUniformLocation(g_tex_prog, buf), false);
 		points[i] = false;
 	}
 
 	// spot light
-	glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "spot.ambient"), 0.05f, 0.05f, 0.05f);
-	glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "spot.diffuse"), 0.8f, 0.8f, 0.8f);
-	glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "spot.specular"), 1.0f, 1.0f, 1.0f);
-	glUniform1f(glGetUniformLocation(g_tex_lighting_prog, "spot.constant"), 1.0f);
-	glUniform1f(glGetUniformLocation(g_tex_lighting_prog, "spot.linear"), 0.09);
-	glUniform1f(glGetUniformLocation(g_tex_lighting_prog, "spot.quadratic"), 0.032);
-	glUniform1f(glGetUniformLocation(g_tex_lighting_prog, "spot.inner_cutoff"), glm::cos(glm::radians(12.5f)));
-	glUniform1f(glGetUniformLocation(g_tex_lighting_prog, "spot.outer_cutoff"), glm::cos(glm::radians(17.5f)));
+	glUniform3f(glGetUniformLocation(g_tex_prog, "spot.ambient"), 0.05f, 0.05f, 0.05f);
+	glUniform3f(glGetUniformLocation(g_tex_prog, "spot.diffuse"), 0.8f, 0.8f, 0.8f);
+	glUniform3f(glGetUniformLocation(g_tex_prog, "spot.specular"), 1.0f, 1.0f, 1.0f);
+	glUniform1f(glGetUniformLocation(g_tex_prog, "spot.constant"), 1.0f);
+	glUniform1f(glGetUniformLocation(g_tex_prog, "spot.linear"), 0.09);
+	glUniform1f(glGetUniformLocation(g_tex_prog, "spot.quadratic"), 0.032);
+	glUniform1f(glGetUniformLocation(g_tex_prog, "spot.inner_cutoff"), glm::cos(glm::radians(12.5f)));
+	glUniform1f(glGetUniformLocation(g_tex_prog, "spot.outer_cutoff"), glm::cos(glm::radians(17.5f)));
 
 	glUseProgram(0);
 }
 
 void
-render_init(const int screenw, const int screenh)
+update_render_view(const Camera &cam)
 {
-	init_gl(screenw, screenh);
-	load_textures();
-	init_uniforms(screenw, screenh);
+	g_view_mat = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
+	glBindBuffer(GL_UNIFORM_BUFFER, g_vert_ubo);
+	glBufferSubData(GL_UNIFORM_BUFFER, sizeof(glm::mat4), sizeof(glm::mat4), glm::value_ptr(g_view_mat));
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+//	auto update_view_uniforms = [&cam](const GLuint program) {
+//		glUseProgram(program);
+//		glUniformMatrix4fv(glGetUniformLocation(program, "u_view"), 1, GL_FALSE, glm::value_ptr(g_view_mat));
+//		glUniform3f(glGetUniformLocation(program, "u_view_pos"), cam.pos.x, cam.pos.y, cam.pos.z);
+//	};
+//	update_view_uniforms(g_tex_prog);
+//	update_view_uniforms(g_notex_prog);
+//	update_view_uniforms(g_nolight_prog);
+//	glUseProgram(0);
 }
 
 void
-render(Camera cam)
+update_render_projection(const Camera &cam, const Screen &scr)
+{
+	g_projection_mat = glm::perspective(cam.fov, (float)scr.w / (float)scr.h, cam.near, cam.far);
+	glBindBuffer(GL_UNIFORM_BUFFER, g_vert_ubo);
+	glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(glm::mat4), glm::value_ptr(g_projection_mat));
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+//	auto update_proj_uniform = [](const GLuint program) {
+//		glUseProgram(program);
+//		glUniformMatrix4fv(glGetUniformLocation(program, "u_projection"), 1, GL_FALSE, glm::value_ptr(g_projection_mat));
+//	};
+//	update_proj_uniform(g_tex_prog);
+//	update_proj_uniform(g_notex_prog);
+//	update_proj_uniform(g_nolight_prog);
+//	glUseProgram(0);
+//	glUniformMatrix4fv(glGetUniformLocation(g_tex_lighting_prog, "u_projection"), 1, GL_FALSE, glm::value_ptr(g_projection_mat));
+}
+
+void
+init_gl(const Screen &scr)
+{
+	init_glew();
+	init_shaders();
+	init_buffers();
+
+	glEnable(GL_DEPTH_TEST);
+	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+	glViewport(0, 0, scr.w, scr.h);
+}
+
+enum UBO_Data_T {
+	vec3f_t = 0,
+	gl_float_t,
+	gl_bool_t,
+};
+
+struct UBO_Member {
+	const char *name;
+	union {
+		GLfloat vec3f[3];
+		GLfloat gl_float;
+		GLboolean gl_bool;
+	} data;
+	UBO_Data_T type;
+};
+
+enum UBO_Dir {
+	dir_dir = 0,
+	dir_amb,
+	dir_diff,
+	dir_spec,
+	num_dir_members
+};
+
+enum UBO_Spot {
+	spot_pos = 0,
+	spot_dir,
+	spot_amb,
+	spot_diff,
+	spot_spec,
+	spot_outer,
+	spot_inner,
+	spot_const,
+	spot_lin,
+	spot_quad,
+	num_spot_members
+};
+
+enum UBO_Point {
+	pt_valid = 0,
+	pt_pos,
+	pt_const,
+	pt_lin,
+	pt_quad,
+	pt_amb,
+	pt_dff,
+	pt_spec,
+	num_pt_members
+};
+
+//frag_ubo_names[dir_spec] = "dir.specular";
+//frag_ubo_names[spot_pos] = "spot.position";
+//frag_ubo_names[spot_dir] = "spot.direction";
+//frag_ubo_names[spot_amb] = "spot.ambient";
+//frag_ubo_names[dir_spec] = "dir.specular";
+//frag_ubo_names[dir_spec] = "dir.specular";
+//frag_ubo_names[dir_spec] = "dir.specular";
+//frag_ubo_names[dir_spec] = "dir.specular";
+//frag_ubo_names[dir_spec] = "dir.specular";
+void
+render_init(const Camera &cam, const Screen &scr)
+{
+	init_gl(scr);
+	load_textures();
+
+	update_render_projection(cam, scr);
+	update_render_view(cam);
+
+	// set light ubo
+	const char *dir_names[num_dir_members];
+	dir_names[dir_dir] = "dir.direction";
+	dir_names[dir_amb] = "dir.ambient";
+	dir_names[dir_diff] = "dir.diffuse";
+
+	const char *spot_names[num_spot_members];
+	spot_names[spot_pos] = "spot.position";
+	spot_names[spot_dir] = "spot.direction";
+	spot_names[spot_amb] = "spot.ambient";
+	spot_names[spot_diff] = "spot.diffuse";
+	spot_names[spot_spec] = "spot.specular";
+	spot_names[spot_outer] = "spot.outer_cutoff";
+	spot_names[spot_inner] = "spot.inner_cutoff";
+	spot_names[spot_const] = "spot.constant";
+	spot_names[spot_lin] = "spot.linear";
+	spot_names[spot_quad] = "spot.quadratic";
+
+	char point_names[num_pt_members * max_pt_lights][256];
+	for (int i = 0; i < max_pt_lights; ++i) {
+		sprintf(point_names[i*num_pt_members + pt_valid], "points[%d].is_valid", i);
+		sprintf(point_names[i*num_pt_members + pt_pos], "points[%d].position", i);
+		sprintf(point_names[i*num_pt_members + pt_const], "points[%d].constant", i);
+		sprintf(point_names[i*num_pt_members + pt_lin], "points[%d].linear", i);
+		sprintf(point_names[i*num_pt_members + pt_quad], "points[%d].quadratic", i);
+		sprintf(point_names[i*num_pt_members + pt_amb], "points[%d].ambient", i);
+		sprintf(point_names[i*num_pt_members + pt_diff], "points[%d].diffuse", i);
+		sprintf(point_names[i*num_pt_members + pt_spec], "points[%d].specular", i);
+	}
+
+	GLuint dir_indices[num_dir_members];
+	glGetUniformIndices(g_tex_prog, num_dir_members, dir_names, dir_indices);
+	for (int i = 0; i < num_dir_members; ++i) {
+		if (dir_indices[i] == GL_INVALID_INDEX)
+			z_abort("could not get index of uniform '%s'", dir_names[i]);
+	}
+	GLint dir_offsets[num_dir_members];
+	glGetActiveUniformsiv(g_tex_prog, num_dir_members, dir_indices, GL_UNIFORM_OFFSET, dir_offsets);
+	GLint dir_sizes[num_dir_members];
+	glGetActiveUniformsiv(g_tex_prog, num_dir_members, dir_indices, GL_UNIFORM_SIZE, dir_sizes);
+	glBindBuffer(GL_UNIFORM_BUFFER, g_frag_ubo);
+	glBufferSubData(GL_UNIFORM_BUFFER, dir_offsets[dir_dir], dir_sizes[dir_dir]
+
+//	for (int i = 0; i < ARR_LEN(names); ++i) {
+//		if (indices[i] == GL_INVALID_INDEX)
+//			z_abort("could not get index of uniform '%s'", names[i]);
+//	}
+//	GLint offsets[ARR_LEN(names)];
+//	glGetActiveUniformsiv(g_tex_prog, ARR_LEN(names), indices, GL_UNIFORM_OFFSET, offsets);
+//	GLfloat dir[3] = ;
+//	GLfloat amb[3] = ;
+//	GLfloat diff[3] = ;
+//	GLfloat spec[3] = ;
+//	GLint lights_blk_sz;
+//	const GLuint lights_ind = glGetUniformBlockIndex(g_tex_prog, "Lights");
+//	glGetActiveUniformBlockiv(g_tex_prog, lights_ind, GL_UNIFORM_BLOCK_DATA_SIZE, &lights_blk_sz);
+//	printf("li %d, lbs %d, ofs %d %d %d %d\n", lights_ind, lights_blk_sz, offsets[0], offsets[1], offsets[2], offsets[3]);
+//	GLubyte *buf = (GLubyte *)malloc(lights_blk_sz);
+//	memcpy(buf + offsets[0], dir, sizeof(dir));
+//	memcpy(buf + offsets[1], amb, sizeof(amb));
+//	memcpy(buf + offsets[2], diff, sizeof(diff));
+//	memcpy(buf + offsets[3], spec, sizeof(spec));
+//	glBindBuffer(GL_UNIFORM_BUFFER, g_frag_ubo);
+//	glBufferData(GL_UNIFORM_BUFFER, lights_blk_sz, buf, GL_STATIC_DRAW);
+//	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+//	//glBindBufferRange(GL_UNIFORM_BUFFER, 1, g_frag_ubo, 0, lights_blk_sz);
+//	glUseProgram(g_tex_prog);
+//	// mat
+//	glUniform3f(glGetUniformLocation(g_tex_prog, "mat.ambient"),  1.0f, 0.5f, 0.31f);
+//	//glUniform3f(glGetUniformLocation(g_tex_prog, "mat.diffuse"),  1.0f, 0.5f, 0.31f);
+//	//glUniform3f(glGetUniformLocation(g_tex_prog, "mat.specular"), 0.5f, 0.5f, 0.5f);
+//	glUniform1i(glGetUniformLocation(g_tex_prog, "mat.diffuse"), 0);
+//	//glUniform1i(glGetUniformLocation(g_tex_prog, "mat.specular"), 1);
+//	glUniform1f(glGetUniformLocation(g_tex_prog, "mat.shininess"), 64.0f);
+//	glUseProgram(0);
+
+//	glBindBuffer(GL_UNIFORM_BUFFER, g_frag_ubo);
+//	glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(glm::mat4), glm::value_ptr(g_projection_mat));
+//	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+}
+
+void
+render(const Camera &cam)
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	glUseProgram(g_tex_lighting_prog);
-	glm::mat4 view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
-	glm::mat4 projection = glm::perspective(45.0f, (GLfloat)800 / (GLfloat)600, 0.1f, 100.0f);
-	glUniformMatrix4fv(glGetUniformLocation(g_tex_lighting_prog, "u_view"), 1, GL_FALSE, glm::value_ptr(view));
-	glUniformMatrix4fv(glGetUniformLocation(g_tex_lighting_prog, "u_projection"), 1, GL_FALSE, glm::value_ptr(projection));
-	glUniform3f(glGetUniformLocation(g_tex_lighting_prog, "u_view_pos"), cam.pos.x, cam.pos.y, cam.pos.z);
-	GLint model_loc = glGetUniformLocation(g_tex_lighting_prog, "u_model");
+//	glm::mat4 view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
+//	glm::mat4 projection = glm::perspective(fov, screen_width / screen_height, near_plane, far_plane);
+//	glUniformMatrix4fv(glGetUniformLocation(g_tex_prog, "u_view"), 1, GL_FALSE, glm::value_ptr(g_view_mat));
+//	glUniformMatrix4fv(glGetUniformLocation(g_tex_prog, "u_projection"), 1, GL_FALSE, glm::value_ptr(g_projection_mat));
+//	glUniform3f(glGetUniformLocation(g_tex_prog, "u_view_pos"), cam.pos.x, cam.pos.y, cam.pos.z);
+	glUseProgram(g_tex_prog);
+	GLint model_loc = glGetUniformLocation(g_tex_prog, "u_model");
 	glm::mat4 model;
-	model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
-	model = glm::scale(model, glm::vec3(1.0f));
 	for (const Render_Info &ri : g_render_group) {
+		model = glm::translate(model, ri.pos);
+		model = glm::scale(model, glm::vec3(1.0f));
+
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, g_tex);
 		glBindVertexArray(ri.vao);
@@ -209,18 +410,6 @@ render(Camera cam)
 	}
 	glBindVertexArray(0);
 	glUseProgram(0);
-}
-
-static void
-init_gl(const int screen_width, const int screen_height)
-{
-	init_glew();
-	init_shaders();
-	init_buffers();
-
-	glEnable(GL_DEPTH_TEST);
-	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-	glViewport(0, 0, screen_width, screen_height);
 }
 
 static void
@@ -251,11 +440,11 @@ init_glew()
 }
 
 static GLuint
-mk_shader(const GLenum type, const std::string &src)
+mk_shader(const GLenum type, const std::string &src, const char *defines)
 {
 	const GLuint id = glCreateShader(type);
-	const char *c_str = src.c_str();
-	glShaderSource(id, 1, &c_str, NULL);
+	const char *src_strs[] = { "#version 330\n", defines, src.c_str() };
+	glShaderSource(id, ARR_LEN(src_strs), src_strs, NULL);
 	glCompileShader(id);
 
 	const char *type_str;
@@ -272,10 +461,10 @@ mk_shader(const GLenum type, const std::string &src)
 }
 
 static GLuint
-mk_program(const std::string &vert_src, const std::string &frag_src)
+mk_program(const std::string &vert_src, const std::string &frag_src, const char *defines)
 {
-	GLuint vert_id = mk_shader(GL_VERTEX_SHADER, vert_src);
-	GLuint frag_id = mk_shader(GL_FRAGMENT_SHADER, frag_src);
+	GLuint vert_id = mk_shader(GL_VERTEX_SHADER, vert_src, defines);
+	GLuint frag_id = mk_shader(GL_FRAGMENT_SHADER, frag_src, defines);
 	GLuint program = glCreateProgram();
 
 	glAttachShader(program, vert_id);
@@ -295,22 +484,27 @@ mk_program(const std::string &vert_src, const std::string &frag_src)
 static void
 init_shaders()
 {
-	auto tl_vert = load_file("tex_lighting.vert", "r");
-	assert(tl_vert);
-	auto tl_frag = load_file("tex_lighting.frag", "r");
-	assert(tl_frag);
-	auto ntl_vert = load_file("notex_lighting.vert", "r");
-	assert(ntl_vert);
-	auto ntl_frag = load_file("notex_lighting.frag", "r");
-	assert(ntl_frag);
-	auto nl_vert = load_file("no_lighting.vert", "r");
-	assert(nl_vert);
-	auto nl_frag = load_file("no_lighting.frag", "r");
-	assert(nl_frag);
+//	auto tl_vert = load_file("tex_lighting.vert", "r");
+//	assert(tl_vert);
+//	auto tl_frag = load_file("tex_lighting.frag", "r");
+//	assert(tl_frag);
+//	auto ntl_vert = load_file("notex_lighting.vert", "r");
+//	assert(ntl_vert);
+//	auto ntl_frag = load_file("notex_lighting.frag", "r");
+//	assert(ntl_frag);
+//	auto nl_vert = load_file("no_lighting.vert", "r");
+//	assert(nl_vert);
+//	auto nl_frag = load_file("no_lighting.frag", "r");
+//	assert(nl_frag);
 
-	g_tex_lighting_prog = mk_program(tl_vert.value(), tl_frag.value());
-	g_no_lighting_prog = mk_program(nl_vert.value(), nl_frag.value());
-	g_notex_lighting_prog = mk_program(ntl_vert.value(), ntl_frag.value());
+	auto vert = load_file("shader.vert", "r");
+	assert(vert);
+	auto frag = load_file("shader.frag", "r");
+	assert(frag);
+
+	g_tex_prog = mk_program(vert.value(), frag.value(), "#define TEX\n");
+	g_nolight_prog = mk_program(vert.value(), frag.value(), "#define NO_LIGHT\n");
+	g_notex_prog = mk_program(vert.value(), frag.value(), "#define NO_TEX\n");
 }
 
 enum GL_Buffers {
@@ -324,6 +518,38 @@ enum GL_Buffers {
 static void
 init_buffers()
 {
+	// init ubo
+	auto set_ubo_bind_pt = [](const GLuint program, const char *name, const GLuint bind_pt) {
+		const GLuint ind = glGetUniformBlockIndex(program, name);
+		glUniformBlockBinding(program, ind, bind_pt);
+	};
+	set_ubo_bind_pt(g_tex_prog, "Matrices", 0);
+	set_ubo_bind_pt(g_notex_prog, "Matrices", 0);
+	set_ubo_bind_pt(g_nolight_prog, "Matrices", 0);
+
+	set_ubo_bind_pt(g_tex_prog, "Lights", 1);
+	set_ubo_bind_pt(g_notex_prog, "Lights", 1);
+
+	glGenBuffers(1, &g_vert_ubo);
+	glGenBuffers(1, &g_frag_ubo);
+
+	const GLuint mat_ind = glGetUniformBlockIndex(g_tex_prog, "Matrices");
+	GLint mat_blk_sz;
+	glGetActiveUniformBlockiv(g_tex_prog, mat_ind, GL_UNIFORM_BLOCK_DATA_SIZE, &mat_blk_sz);
+	glBindBuffer(GL_UNIFORM_BUFFER, g_vert_ubo);
+	glBufferData(GL_UNIFORM_BUFFER, mat_blk_sz, NULL, GL_STATIC_DRAW);
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+	//glBindBufferRange(GL_UNIFORM_BUFFER, 0, g_vert_ubo, 0, mat_blk_sz);
+
+	const GLuint lights_ind = glGetUniformBlockIndex(g_tex_prog, "Lights");
+	GLint lights_blk_sz;
+	glGetActiveUniformBlockiv(g_tex_prog, lights_ind, GL_UNIFORM_BLOCK_DATA_SIZE, &lights_blk_sz);
+	glBindBuffer(GL_UNIFORM_BUFFER, g_frag_ubo);
+	glBufferData(GL_UNIFORM_BUFFER, lights_blk_sz, NULL, GL_STATIC_DRAW);
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+	//glBindBufferRange(GL_UNIFORM_BUFFER, 1, g_frag_ubo, 0, lights_blk_sz);
+
+	// init vao
 	auto mk_render_info = [](const Model_Info *mi, const GLuint vao, const GLuint *buf_ids) {
 		glBindVertexArray(vao);
 		glBindBuffer(GL_ARRAY_BUFFER, buf_ids[vert_buf]);
@@ -346,10 +572,10 @@ init_buffers()
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buf_ids[ind_buf]);
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, mi->indices.size() * sizeof(GLuint), mi->indices.data(), GL_STATIC_DRAW);
 
-		return Render_Info { vao, buf_ids[ind_buf], mi->indices.size() };
+		return Render_Info { glm::vec3(0.0f), vao, buf_ids[ind_buf], mi->indices.size() };
 	};
 
-	const char *fnames[] = { "cube.fmt" };
+	const char *fnames[] = { "cube.ahh" };
 	constexpr size_t num_files = sizeof(fnames) / sizeof(fnames[0]);
 	constexpr size_t max_models = num_files;
 	constexpr size_t max_array_objs = max_models;

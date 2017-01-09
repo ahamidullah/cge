@@ -12,6 +12,7 @@ import bpy
 import bmesh
 from bpy_extras.io_utils import ExportHelper
 
+# /usr/share/blender/scripts/addons/io_mesh_myformat/__init__.py
 class ExportMyFormat(bpy.types.Operator, ExportHelper):
 	bl_idname       = "export_my_format.ahh";
 	bl_label        = "ahh";
@@ -23,6 +24,13 @@ class ExportMyFormat(bpy.types.Operator, ExportHelper):
 		out = open(self.properties.filepath, 'w')
 		sce = context.scene
 		ob = sce.objects.active
+		for mat_slot in ob.material_slots:
+			for mtex_slot in mat_slot.material.texture_slots:
+				if mtex_slot:
+					#print("\t%s" % mtex_slot)
+					if hasattr(mtex_slot.texture , 'image'):
+                    				out.write('tf %s\n' % bpy.path.abspath(mtex_slot.texture.image.filepath))
+
 		bm = bmesh.new()
 		bm.from_mesh(ob.data)
 		bmesh.ops.triangulate(bm, faces=bm.faces)

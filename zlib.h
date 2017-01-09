@@ -1,8 +1,6 @@
 #ifndef __ZLIB_H__
 #define __ZLIB_H__
 
-// mostly just for fun
-
 #include <string>
 #include <stdint.h>
 #include <stddef.h>
@@ -17,6 +15,7 @@ namespace std {
 
 #define z_abort(fmt, ...) error(__FILE__, __LINE__, __func__, true, fmt, ## __VA_ARGS__)
 #define z_log_err(fmt, ...) error(__FILE__, __LINE__, __func__, false, fmt, ## __VA_ARGS__)
+#define ARR_LEN(x) (sizeof(x)/sizeof(x[0]))
 
 void error(const char *, int, const char *, bool, const char *, ...);
 std::optional<std::string> load_file(const char *, const char *);

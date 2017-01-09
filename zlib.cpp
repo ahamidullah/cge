@@ -52,3 +52,8 @@ load_file(const char *fname, const char *mode)
 	SDL_RWclose(fp);
 	return buf;
 }
+
+//std::optional<vec3f>
+//raycast_sphere(const glm::vec2 screen_ray, const glm::vec3 plane_normal, const float origin_ofs, const Camera &cam)
+//{
+//}

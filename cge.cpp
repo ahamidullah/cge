@@ -1,16 +1,11 @@
 #include <stdio.h>
-#include <tuple>
 #include "render.h"
+#include "physics.h"
 #include "zlib.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <GL/glew.h>
-
-enum {
-	SCREEN_WIDTH = 800,
-	SCREEN_HEIGHT = 600,
-};
 
 struct vec2 {
 	int x;
@@ -30,35 +25,35 @@ struct Keyboard {
 };
 
 void
-key_down(Keyboard *kb_state, const SDL_KeyboardEvent& e)
+key_down(Keyboard *kb, const SDL_KeyboardEvent& e)
 {
-	kb_state->keys[e.keysym.scancode] = true;
+	kb->keys[e.keysym.scancode] = true;
 	if (!e.repeat)
-		kb_state->keys_toggle[e.keysym.scancode] = true;
+		kb->keys_toggle[e.keysym.scancode] = true;
 }
 
 void
-key_up(Keyboard *kb_state, const SDL_KeyboardEvent& e)
+key_up(Keyboard *kb, const SDL_KeyboardEvent& e)
 {
-	kb_state->keys[e.keysym.scancode] = false;
-	kb_state->keys_toggle[e.keysym.scancode] = false;
+	kb->keys[e.keysym.scancode] = false;
+	kb->keys_toggle[e.keysym.scancode] = false;
 }
 
 bool
-is_key_down(const Keyboard *kb_state, const SDL_Keycode k)
+is_key_down(const Keyboard *kb, const SDL_Keycode k)
 {
-	return kb_state->keys[SDL_GetScancodeFromKey(k)];
+	return kb->keys[SDL_GetScancodeFromKey(k)];
 }
 
 // has the key moved from up to down? if so, unset it in keys_toggle
 // if multiple people people are looking for the same key press, only the first will get it -- bad
 // but I don't want to use callbacks so this will do for now
 bool
-was_key_pressed(Keyboard *kb_state, const SDL_Keycode k)
+was_key_pressed(Keyboard *kb, const SDL_Keycode k)
 {
 	SDL_Scancode sc = SDL_GetScancodeFromKey(k);
-	if (kb_state->keys_toggle[sc]) {
-		kb_state->keys_toggle[sc] = false;
+	if (kb->keys_toggle[sc]) {
+		kb->keys_toggle[sc] = false;
 		return true;
 	}
 	return false;
@@ -95,7 +90,7 @@ update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 	}
 
 	if (is_first_person) {
-		//if (m.pos.x != m.last_pos.x || m.pos.y != m.last_pos.y) {
+		if (m.relative_pos.x != 0 || m.relative_pos.y != 0) {
 			//cam->yaw += (m.pos.x - m.last_pos.x) * m.sensitivity;
 			//cam->pitch += (m.last_pos.y - m.pos.y) * m.sensitivity; //reversed because y coord range from top to bottom
 			cam->yaw += m.relative_pos.x * m.sensitivity;
@@ -107,7 +102,7 @@ update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 				cam->pitch = -89.0f;
 			}
 			cam->front = calc_front(cam->pitch, cam->yaw);
-		//}
+		}
 		if(is_key_down(kb, SDLK_w))
 			cam->pos += cam->speed * cam->front;
 		if(is_key_down(kb, SDLK_s))
@@ -151,12 +146,47 @@ recenter_mouse(Mouse *m)
 	//m->last_pos = m->pos;
 }
 
-std::tuple<SDL_Window*, SDL_GLContext>
-init_sdl()
+enum program_state {
+	run_state,
+	pause_state,
+	exit_state,
+};
+
+program_state
+process_input(Keyboard *kb, Mouse *m, const Screen &scr, const Camera &cam)
+{
+	SDL_Event e;
+	while(SDL_PollEvent(&e) != 0) {
+		switch (e.type) {
+			case SDL_QUIT:
+				return exit_state;
+			case SDL_KEYDOWN:
+				key_down(kb, e.key);
+				break;
+			case SDL_KEYUP:
+				key_up(kb, e.key);
+				break;
+			case SDL_MOUSEMOTION:
+				break;
+			case SDL_MOUSEBUTTONDOWN: 
+			{
+				auto pos = raycast_plane(glm::vec2(e.button.x, e.button.y), glm::vec3(0.0f, 1.0f, 0.0f), cam.pos, 0.0f, scr);
+				if (pos)
+					mk_point_light(*pos);
+				break;
+			}
+			case SDL_MOUSEBUTTONUP:
+				break;
+		}
+	}
+	update_mouse_pos(m);
+	return run_state;
+}
+
+SDL_Window *
+sdl_init(const Screen &scr)
 {
 	SDL_Window *win;
-	SDL_GLContext context;
-
 	int winflags = (SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
 	int imgflags = (IMG_INIT_PNG | IMG_INIT_JPG);
 
@@ -168,109 +198,63 @@ init_sdl()
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
-	if (!(win = SDL_CreateWindow("cge", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, winflags))) {
+	if (!(win = SDL_CreateWindow("cge", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, scr.w, scr.h, winflags))) {
 		z_abort("SDL could not create a window! SDL Error: %s\n", SDL_GetError());
 	}
-	//initialize PNG loading
 	if (!(IMG_Init(imgflags) & imgflags)) {
 		z_abort("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
 	}
-	if (!(context = SDL_GL_CreateContext(win))) {
+	if (!SDL_GL_CreateContext(win)) {
 		z_abort("SDL could not create an OpenGL context! SDL Error: %s\n", SDL_GetError());
 	}
-	return std::make_tuple(win, context);
-}
-
-enum game_state {
-	game_play,
-	game_pause,
-	game_exit,
-};
-
-game_state
-process_input(Keyboard *kb, Mouse *m, const Camera &cam)
-{
-	SDL_Event e;
-	while(SDL_PollEvent(&e) != 0) {
-		switch (e.type) {
-			case SDL_QUIT:
-				return game_exit;
-			case SDL_KEYDOWN:
-				key_down(kb, e.key);
-				break;
-			case SDL_KEYUP:
-				key_up(kb, e.key);
-				break;
-			case SDL_MOUSEMOTION:
-				break;
-			case SDL_MOUSEBUTTONDOWN: 
-			{
-				// ray cast to make a point light
-				float x = (2.0f * e.button.x) / SCREEN_WIDTH - 1.0f;
-				float y = 1.0f - (2.0f * e.button.y) / SCREEN_HEIGHT;
-				glm::vec4 ray_clip = glm::vec4(x, y, -1.0f, 1.0f);
-        			glm::mat4 projection = glm::perspective(45.0f, (GLfloat)SCREEN_WIDTH / (GLfloat)SCREEN_HEIGHT, 0.1f, 100.0f);
-				glm::vec4 ray_eye = glm::inverse(projection) * ray_clip;
-				ray_eye = glm::vec4(ray_eye.x, ray_eye.y, -1.0f, 0.0f);
-				glm::mat4 view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
-				glm::vec3 ray_world = glm::normalize((glm::inverse(view) * ray_eye).xyz());
-				float t = -(glm::dot(cam.pos, glm::vec3(0.0f, 1.0f, 0.0f)) / glm::dot(ray_world, glm::vec3(0.0f, 1.0f, 0.0f)));
-				glm::vec3 pos = cam.pos + ray_world * t;
-				make_point_light({ pos.x, pos.y, pos.z });
-				break;
-			}
-			case SDL_MOUSEBUTTONUP:
-				break;
-		}
-	}
-	update_mouse_pos(m);
-	return game_play;
+	return win;
 }
 
 int
 main()
 {
-	SDL_Window *window;
-	SDL_GLContext context;
-	std::tie(window, context) = init_sdl();
+	constexpr int TICKS_PER_SECOND =  25;
+	constexpr int SKIP_TICKS = 1000/TICKS_PER_SECOND;
+	constexpr int MAX_FRAMESKIP = 5;
 
-	const unsigned int TICKS_PER_SECOND =  25;
-	const unsigned int SKIP_TICKS = 1000/TICKS_PER_SECOND;
-	const unsigned int MAX_FRAMESKIP = 5;
-
-	game_state state = game_play;
-	unsigned int num_updates = 0;
-	unsigned int next_game_tick = 0;
 	//SDL_SetRelativeMouseMode(SDL_TRUE);
 	Keyboard kb = { {0}, {0} };
-	Camera cam = { 0.0f, 0.0f, 0.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f,  0.0f) };
+	Camera cam = { 0.0f, 0.0f, 0.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f,  0.0f), 45.0f, 0.1f, 100.0f };
 	Mouse mouse = { {400, 300}, {400, 300}, 0.1f, {false, false, false} };
+	Screen screen = { 800, 600 };
 
-	render_init(SCREEN_WIDTH, SCREEN_HEIGHT);
-	while (!(state == game_exit)) {
+	SDL_Window *window = sdl_init(screen);
+	render_init(cam, screen);
+
+	program_state state = run_state;
+	int num_updates = 0;
+	int next_tick = SDL_GetTicks();
+
+	while (state != exit_state) {
 		switch (state) {
-			case game_play: {
+			case run_state: {
 				num_updates = 0;
-				while (next_game_tick < SDL_GetTicks() && num_updates < MAX_FRAMESKIP) {
-					state = process_input(&kb, &mouse, cam);
+				while (next_tick < SDL_GetTicks() && num_updates < MAX_FRAMESKIP) {
+					state = process_input(&kb, &mouse, screen, cam);
 					update_camera(mouse, &kb, &cam);
-					next_game_tick += SKIP_TICKS;
-					num_updates++;
+					update_render_view(cam);
+					next_tick += SKIP_TICKS;
+					++num_updates;
 				}
 				render(cam);
 				SDL_GL_SwapWindow(window);
 				break;
 			}
-			case game_pause: {
+			case pause_state: {
 				break;
 			}
-			case game_exit: {
+			case exit_state: {
 				break;
 			}
 		}
 	}
 	SDL_DestroyWindow(window);
-	SDL_GL_DeleteContext(context);
+//	SDL_GL_DeleteContext(context);
 	IMG_Quit();
 	SDL_Quit();
 	return 0;

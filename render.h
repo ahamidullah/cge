@@ -3,20 +3,37 @@
 
 #define GLM_SWIZZLE
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <GL/glew.h>
 #include "zlib.h"
 
 struct Camera {
-	GLfloat pitch;
-	GLfloat yaw;
-	GLfloat speed;
+	float pitch;
+	float yaw;
+	float speed;
 	glm::vec3 pos;
 	glm::vec3 front;
 	glm::vec3 up;
+
+	float fov;
+	float near;
+	float far;
 };
 
-void render_init(const int screen_widht, const int screen_height);
-void render(Camera);
-void make_point_light(vec3f pos);
+struct Screen {
+	int w;
+	int h;
+};
+
+//float screen_width = 800.0f;
+//float screen_height = 600.0f;
+//static float fov = 45.0f;
+//static float near_plane = 0.1f;
+//static float far_plane = 100.0f;
+
+void render_init(const Camera &, const Screen &);
+void update_render_view(const Camera &);
+void render(const Camera &cam);
+void mk_point_light(glm::vec3 pos);
 
 #endif
