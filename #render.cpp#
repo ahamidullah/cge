@@ -269,17 +269,65 @@ init_gl(const Screen &scr)
 	glViewport(0, 0, scr.w, scr.h);
 }
 
-static Dir_Light dir;
-static Spot_Light spot;
-static Point_Light points[MAX_NUM_PT_LIGHTS];
-
-enum UBO_Members {
-	ubo_dir,
-	ubo_spot,
-	ubo_points,
-	ubo_num_members
+enum UBO_Data_T {
+	vec3f_t = 0,
+	gl_float_t,
+	gl_bool_t,
 };
 
+struct UBO_Member {
+	const char *name;
+	union {
+		GLfloat vec3f[3];
+		GLfloat gl_float;
+		GLboolean gl_bool;
+	} data;
+	UBO_Data_T type;
+};
+
+enum UBO_Dir {
+	dir_dir = 0,
+	dir_amb,
+	dir_diff,
+	dir_spec,
+	num_dir_members
+};
+
+enum UBO_Spot {
+	spot_pos = 0,
+	spot_dir,
+	spot_amb,
+	spot_diff,
+	spot_spec,
+	spot_outer,
+	spot_inner,
+	spot_const,
+	spot_lin,
+	spot_quad,
+	num_spot_members
+};
+
+enum UBO_Point {
+	pt_valid = 0,
+	pt_pos,
+	pt_const,
+	pt_lin,
+	pt_quad,
+	pt_amb,
+	pt_dff,
+	pt_spec,
+	num_pt_members
+};
+
+//frag_ubo_names[dir_spec] = "dir.specular";
+//frag_ubo_names[spot_pos] = "spot.position";
+//frag_ubo_names[spot_dir] = "spot.direction";
+//frag_ubo_names[spot_amb] = "spot.ambient";
+//frag_ubo_names[dir_spec] = "dir.specular";
+//frag_ubo_names[dir_spec] = "dir.specular";
+//frag_ubo_names[dir_spec] = "dir.specular";
+//frag_ubo_names[dir_spec] = "dir.specular";
+//frag_ubo_names[dir_spec] = "dir.specular";
 void
 render_init(const Camera &cam, const Screen &scr)
 {
@@ -289,49 +337,36 @@ render_init(const Camera &cam, const Screen &scr)
 	update_render_projection(cam, scr);
 	update_render_view(cam);
 
-	// init light ubo
-	{
-		const char *ubo_names[ubo_num_members];
-		GLuint ubo_indices[ubo_num_members];
-		GLint ubo_offsets[ubo_num_members];
-		ubo_names[ubo_dir] = "dir";
-		ubo_names[ubo_spot] = "spot";
-		ubo_names[ubo_points] = "points";
-		glGetUniformIndices(g_tex_prog, ubo_num_members, ubo_names, ubo_indices);
-		for (int i = 0; i < ubo_num_members; ++i) {
-			if (ubo_indices[i] == GL_INVALID_INDEX)
-				z_abort("could not get index of uniform '%s'", ubo_names[i]);
-		}
-		glGetActiveUniformsiv(g_tex_prog, ubo_num_members, ubo_indices, GL_UNIFORM_OFFSET, ubo_offsets);
+	// set light ubo
+	const char *dir_names[num_dir_members];
+	dir_names[dir_dir] = "dir.direction";
+	dir_names[dir_amb] = "dir.ambient";
+	dir_names[dir_diff] = "dir.diffuse";
 
-		dir.direction
-		dir.ambient
-		dir.diffuse
-		dir.specular
-		spot.position;
-		spot.direction;
-		spot.ambient;
-		spot.diffuse;
-		spot.specular;
-		spot.outer_cutoff;
-		spot.inner_cutoff;
-		spot.constant;
-		spot.linear;
-		spot.quadratic;
-		for (int i = 0; i < MAX_NUM_PT_LIGHTS; ++i) {
-			points[i].position;
-			points[i].ambient;
-			points[i].diffuse;
-			points[i].specular;
-			points[i].constant;
-			points[i].linear;
-			points[i].quadratic;
-			points[i].is_valid;
-		}
+	const char *spot_names[num_spot_members];
+	spot_names[spot_pos] = "spot.position";
+	spot_names[spot_dir] = "spot.direction";
+	spot_names[spot_amb] = "spot.ambient";
+	spot_names[spot_diff] = "spot.diffuse";
+	spot_names[spot_spec] = "spot.specular";
+	spot_names[spot_outer] = "spot.outer_cutoff";
+	spot_names[spot_inner] = "spot.inner_cutoff";
+	spot_names[spot_const] = "spot.constant";
+	spot_names[spot_lin] = "spot.linear";
+	spot_names[spot_quad] = "spot.quadratic";
 
-		glBindBuffer(GL_UNIFORM_BUFFER, g_frag_ubo);
-		glBufferSubData(GL_UNIFORM_BUFFER, dir_offsets[dir_dir], dir_sizes[dir_dir]
+	char point_names[num_pt_members * max_pt_lights][256];
+	for (int i = 0; i < max_pt_lights; ++i) {
+		sprintf(point_names[i*num_pt_members + pt_valid], "points[%d].is_valid", i);
+		sprintf(point_names[i*num_pt_members + pt_pos], "points[%d].position", i);
+		sprintf(point_names[i*num_pt_members + pt_const], "points[%d].constant", i);
+		sprintf(point_names[i*num_pt_members + pt_lin], "points[%d].linear", i);
+		sprintf(point_names[i*num_pt_members + pt_quad], "points[%d].quadratic", i);
+		sprintf(point_names[i*num_pt_members + pt_amb], "points[%d].ambient", i);
+		sprintf(point_names[i*num_pt_members + pt_diff], "points[%d].diffuse", i);
+		sprintf(point_names[i*num_pt_members + pt_spec], "points[%d].specular", i);
 	}
+
 	GLuint dir_indices[num_dir_members];
 	glGetUniformIndices(g_tex_prog, num_dir_members, dir_names, dir_indices);
 	for (int i = 0; i < num_dir_members; ++i) {
@@ -343,7 +378,7 @@ render_init(const Camera &cam, const Screen &scr)
 	GLint dir_sizes[num_dir_members];
 	glGetActiveUniformsiv(g_tex_prog, num_dir_members, dir_indices, GL_UNIFORM_SIZE, dir_sizes);
 	glBindBuffer(GL_UNIFORM_BUFFER, g_frag_ubo);
-	glBufferSubData(GL_UNIFORM_BUFFER, dir_offsets[dir_dir], dir_sizes[dir_dir]
+	glBufferSubData(GL_UNIFORM_BUFFER, dir_offsets[dir_dir], dir_sizes[dir_dir];
 
 //	for (int i = 0; i < ARR_LEN(names); ++i) {
 //		if (indices[i] == GL_INVALID_INDEX)
@@ -620,7 +655,7 @@ flip_surface_x (SDL_Surface* s)
 	return flip;
 };
 
-static SDL_Surface *
+SDL_Surface *
 load_surface(const char *fname)
 {
 	SDL_Surface *surface;

@@ -28,19 +28,20 @@ out vec4 t_color;
 	uniform Material mat;
 
 	struct Dir_Light {
-		vec3 direction;
-		vec3 ambient;
-		vec3 diffuse;
-		vec3 specular;
+		vec4 direction;
+		vec4 ambient;
+		vec4 diffuse;
+		vec4 specular;
 	};
 	
 	struct Spot_Light {
-		vec3 position;
-		vec3 direction;
-		vec3 ambient;
-		vec3 diffuse;
-		vec3 specular;
-	
+		// TODO: pack the floats into the last component of the vec4
+		vec4 position;
+		vec4 direction;
+		vec4 ambient;
+		vec4 diffuse;
+		vec4 specular;
+
 		float outer_cutoff;
 		float inner_cutoff;
 		float constant;
@@ -49,17 +50,15 @@ out vec4 t_color;
 	};
 
 	#define MAX_NUM_PT_LIGHTS 4
-	struct Point_Light {    
-		bool is_valid;
-		vec3 position;
-	
+	struct Point_Light {
+		vec4 position;
+		vec4 ambient;
+		vec4 diffuse;
+		vec4 specular;
 		float constant;
 		float linear;
 		float quadratic;
-	
-		vec3 ambient;
-		vec3 diffuse;
-		vec3 specular;
+		bool is_valid;
 	};
 
 	layout (std140) uniform Lights
