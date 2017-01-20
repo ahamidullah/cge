@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include "render.h"
-#include "physics.h"
 #include "zlib.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -59,13 +58,6 @@ was_key_pressed(Keyboard *kb, const SDL_Keycode k)
 	return false;
 }
 
-void
-update_mouse_pos(Mouse *m)
-{
-	SDL_GetRelativeMouseState(&m->relative_pos.x, &m->relative_pos.y);
-	SDL_GetMouseState(&m->pos.x, &m->pos.y);
-}
-
 glm::vec3
 calc_front(GLfloat pitch, GLfloat yaw)
 {
@@ -79,7 +71,7 @@ calc_front(GLfloat pitch, GLfloat yaw)
 void
 update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 {
-	static Camera saved_cam = { -45.0f, 45.0f, 0.2f, glm::vec3(0.0f, 10.0f,  -5.0f), calc_front(-45.0f, 45.0f), glm::vec3(0.0f, 1.0f,  0.0f) };
+	static Camera saved_cam = { -45.0f, 45.0f, 0.2f, glm::vec3(0.0f, 10.0f,  -5.0f), calc_front(-45.0f, 45.0f), glm::vec3(0.0f, 1.0f,  0.0f), 45.0f, 0.1f, 100.0f };
 	static bool is_first_person = true;
 
 	if (was_key_pressed(kb, SDLK_g)) {
@@ -139,12 +131,14 @@ update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 	}
 }
 
+/*
 void
 recenter_mouse(Mouse *m)
 {
 	//SDL_GetMouseState(&m->pos.x, &m->pos.y);
 	//m->last_pos = m->pos;
 }
+*/
 
 enum program_state {
 	run_state,
@@ -179,35 +173,9 @@ process_input(Keyboard *kb, Mouse *m, const Screen &scr, const Camera &cam)
 				break;
 		}
 	}
-	update_mouse_pos(m);
+	SDL_GetRelativeMouseState(&m->relative_pos.x, &m->relative_pos.y);
+	SDL_GetMouseState(&m->pos.x, &m->pos.y);
 	return run_state;
-}
-
-SDL_Window *
-sdl_init(const Screen &scr)
-{
-	SDL_Window *win;
-	int winflags = (SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
-	int imgflags = (IMG_INIT_PNG | IMG_INIT_JPG);
-
-	if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) < 0) {
-		z_abort("SDL could not initialize video! SDL Error: %s\n", SDL_GetError());
-	}
-
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-
-	if (!(win = SDL_CreateWindow("cge", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, scr.w, scr.h, winflags))) {
-		z_abort("SDL could not create a window! SDL Error: %s\n", SDL_GetError());
-	}
-	if (!(IMG_Init(imgflags) & imgflags)) {
-		z_abort("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
-	}
-	if (!SDL_GL_CreateContext(win)) {
-		z_abort("SDL could not create an OpenGL context! SDL Error: %s\n", SDL_GetError());
-	}
-	return win;
 }
 
 int
@@ -219,16 +187,40 @@ main()
 
 	//SDL_SetRelativeMouseMode(SDL_TRUE);
 	Keyboard kb = { {0}, {0} };
-	Camera cam = { 0.0f, 0.0f, 0.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f,  0.0f), 45.0f, 0.1f, 100.0f };
+	Camera cam = { 0.0f, 0.0f, 0.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 45.0f, 0.1f, 100.0f };
 	Mouse mouse = { {400, 300}, {400, 300}, 0.1f, {false, false, false} };
 	Screen screen = { 800, 600 };
+	SDL_Window *window;
 
-	SDL_Window *window = sdl_init(screen);
+	// sdl init
+	{
+		int winflags = (SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+		int imgflags = (IMG_INIT_PNG | IMG_INIT_JPG);
+	
+		if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) < 0) {
+			zabort("SDL could not initialize video! SDL Error: %s\n", SDL_GetError());
+		}
+
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+
+		if (!(window = SDL_CreateWindow("cge", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, screen.w, screen.h, winflags))) {
+			zabort("SDL could not create a window! SDL Error: %s\n", SDL_GetError());
+		}
+		if (!(IMG_Init(imgflags) & imgflags)) {
+			zabort("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
+		}
+		if (!SDL_GL_CreateContext(window)) {
+			zabort("SDL could not create an OpenGL context! SDL Error: %s\n", SDL_GetError());
+		}
+	}
+
 	render_init(cam, screen);
 
 	program_state state = run_state;
 	int num_updates = 0;
-	int next_tick = SDL_GetTicks();
+	unsigned next_tick = SDL_GetTicks();
 
 	while (state != exit_state) {
 		switch (state) {

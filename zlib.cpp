@@ -25,12 +25,12 @@ load_file(const char *fname, const char *mode)
 {
 	SDL_RWops *fp = SDL_RWFromFile(fname, mode);
 	if (!fp) {
-		z_log_err("error loading file %s!\n", fname);
+		zerror("error loading file %s!\n", fname);
 		return {};
 	}
 	Sint64 file_len = SDL_RWsize(fp);
 	if (file_len < 0) {
-		z_log_err("could not get %s file length! SDL Error: %s\n", fname, SDL_GetError());
+		zerror("could not get %s file length! SDL Error: %s\n", fname, SDL_GetError());
 		return {};
 	}
 	std::string buf;
@@ -45,7 +45,7 @@ load_file(const char *fname, const char *mode)
 	} while (total_bytes_read < file_len && cur_bytes_read != 0);
 
 	if (total_bytes_read != file_len) {
-		z_log_err("error read reading file %s!", fname);
+		zerror("error read reading file %s!", fname);
 		return {};
 	}
 	buf[file_len] = '\0';

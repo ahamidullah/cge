@@ -35,5 +35,6 @@ void render_init(const Camera &, const Screen &);
 void update_render_view(const Camera &);
 void render(const Camera &cam);
 void mk_point_light(glm::vec3 pos);
+std::optional<glm::vec3> raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Screen &);
 
 #endif

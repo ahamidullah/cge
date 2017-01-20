@@ -3,28 +3,28 @@ out vec4 t_color;
 #ifdef NO_LIGHT
 	void main()
 	{
-		t_color = vec4(1.0f); // Set all 4 vector values to 1.0f
+		t_color = vec4(1.0f);
 	}
 
 #elif defined(TEX) || defined(NO_TEX)
 	in vec3 t_normal;
 	in vec3 t_frag_pos;
 	uniform vec3 u_view_pos;
-#ifdef TEX
+#  ifdef TEX
 	in vec2 t_tex_coords;
 	struct Material {
 		sampler2D diffuse;
 		sampler2D specular;
 		float shininess;
 	};
-#else
+#  else
 	struct Material {
 		vec3 ambient;
 		vec3 diffuse;
 		vec3 specular;
 		float shininess;
 	};
-#endif
+#  endif
 	uniform Material mat;
 
 	struct Dir_Light {
@@ -68,44 +68,44 @@ out vec4 t_color;
 		Point_Light points[MAX_NUM_PT_LIGHTS];
 	};
 
-	vec3 calc_ambient(vec3 intensity)
+	vec3 ambient(vec3 intensity)
 	{
-#ifdef NO_TEX
+#  ifdef NO_TEX
 		return intensity * mat.ambient;
-#else
+#  else
 		return intensity * vec3(texture(mat.diffuse, t_tex_coords));
-#endif
+#  endif
 	}
 	
-	vec3 calc_diffuse(vec3 intensity, vec3 recv_dir)
+	vec3 diffuse(vec3 intensity, vec3 recv_dir)
 	{
 		float impact = max(dot(t_normal, recv_dir), 0.0f);
-#ifdef NO_TEX
+#  ifdef NO_TEX
 		return intensity * impact * mat.diffuse;
-#else
+#  else
 		return intensity * impact * vec3(texture(mat.diffuse, t_tex_coords));
-#endif
+#  endif
 	}
 	
-	vec3 calc_specular(vec3 intensity, vec3 recv_dir, vec3 view_dir)
+	vec3 specular(vec3 intensity, vec3 recv_dir, vec3 view_dir)
 	{
 		vec3 reflect_dir = reflect(-recv_dir, t_normal);
 		float impact = pow(max(dot(view_dir, reflect_dir), 0.0), mat.shininess);
-#ifdef NO_TEX
+#  ifdef NO_TEX
 		return intensity * impact * mat.specular;
-#else
+#  else
 		//return light_specular * specular_impact * vec3(texture(mat.specular, t_tex_coords));
 		return vec3(0);
-#endif
+#  endif
 	}
 	
-	float calc_attenuation(vec3 light_pos, float constant, float linear, float quadratic)
+	float attenuation(vec3 light_pos, float constant, float linear, float quadratic)
 	{
 		float distance = length(light_pos - t_frag_pos);
 		return 1.0f / (constant + linear * distance + quadratic * (distance * distance));
 	}
 	
-	float calc_intensity(vec3 recv_dir, vec3 light_dir, float inner_cutoff, float outer_cutoff)
+	float intensity(vec3 recv_dir, vec3 light_dir, float inner_cutoff, float outer_cutoff)
 	{
 		float theta = dot(recv_dir, normalize(-light_dir));
 		float epsilon   = inner_cutoff - outer_cutoff;
@@ -119,33 +119,33 @@ out vec4 t_color;
 	
 		// directional lighting
 		{
-			vec3 recv_dir = normalize(-dir.direction);
-			dir_result = calc_ambient(dir.ambient) +
-			             calc_diffuse(dir.diffuse, recv_dir) +
-			             calc_specular(dir.specular, recv_dir, view_dir);
+			vec3 recv_dir = normalize(-dir.direction.xyz);
+			dir_result = ambient(dir.ambient.xyz) +
+			             diffuse(dir.diffuse.xyz, recv_dir) +
+			             specular(dir.specular.xyz, recv_dir, view_dir);
 		}
 		// point lights
 		{
 			vec3 recv_dir;
 			for (int i = 0; i < MAX_NUM_PT_LIGHTS; i++) {
 				if (points[i].is_valid) {
-					recv_dir = normalize(points[i].position - t_frag_pos);
-					pt_result += (calc_ambient(points[i].ambient) +
-							calc_diffuse(points[i].diffuse, recv_dir) +
-							calc_specular(points[i].specular, recv_dir, view_dir)) *
-							calc_attenuation(points[i].position, points[i].constant, points[i].linear, points[i].quadratic);
+					recv_dir = normalize(points[i].position.xyz - t_frag_pos);
+					pt_result += (ambient(points[i].ambient.xyz) +
+							diffuse(points[i].diffuse.xyz, recv_dir) +
+							specular(points[i].specular.xyz, recv_dir, view_dir)) *
+							attenuation(points[i].position.xyz, points[i].constant, points[i].linear, points[i].quadratic);
 				}
 			}
 		}
 	
 		// spot light
 		{
-			vec3 recv_dir = normalize(spot.position - t_frag_pos);
-			float intensity = calc_intensity(recv_dir, spot.direction, spot.inner_cutoff, spot.outer_cutoff);
-			spot_result = (calc_ambient(spot.ambient) +
-					(calc_diffuse(spot.diffuse, recv_dir) * intensity) +
-					(calc_specular(spot.specular, recv_dir, view_dir) * intensity)) *
-					calc_attenuation(spot.position, spot.constant, spot.linear, spot.quadratic);
+			vec3 recv_dir = normalize(spot.position.xyz - t_frag_pos);
+			float intensity = intensity(recv_dir, spot.direction.xyz, spot.inner_cutoff, spot.outer_cutoff);
+			spot_result = (ambient(spot.ambient.xyz) +
+					(diffuse(spot.diffuse.xyz, recv_dir) * intensity) +
+					(specular(spot.specular.xyz, recv_dir, view_dir) * intensity)) *
+					attenuation(spot.position.xyz, spot.constant, spot.linear, spot.quadratic);
 		}
 	
 		t_color = vec4(dir_result + pt_result + spot_result, 1.0);
