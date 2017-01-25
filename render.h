@@ -7,6 +7,17 @@
 #include <GL/glew.h>
 #include "zlib.h"
 
+struct RenderID {
+	int rgroup_id;
+	int mgroup_id;
+	int instance_id;
+};
+
+struct ModelID {
+	int rgroup_id;
+	int mgroup_id;
+};
+
 struct Camera {
 	float pitch;
 	float yaw;
@@ -25,14 +36,10 @@ struct Screen {
 	int h;
 };
 
-//float screen_width = 800.0f;
-//float screen_height = 600.0f;
-//static float fov = 45.0f;
-//static float near_plane = 0.1f;
-//static float far_plane = 100.0f;
-
 void render_init(const Camera &, const Screen &);
-void update_render_view(const Camera &);
+void render_update_view(const Camera &);
+RenderID render_add(const char *);
+//void render_update_ent(RenderID, const glm::vec3 &);
 void render(const Camera &cam);
 void mk_point_light(glm::vec3 pos);
 std::optional<glm::vec3> raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Screen &);

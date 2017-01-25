@@ -94,8 +94,7 @@ out vec4 t_color;
 #  ifdef NO_TEX
 		return intensity * impact * mat.specular;
 #  else
-		//return light_specular * specular_impact * vec3(texture(mat.specular, t_tex_coords));
-		return vec3(0);
+		return intensity * impact * vec3(texture(mat.specular, t_tex_coords));
 #  endif
 	}
 	

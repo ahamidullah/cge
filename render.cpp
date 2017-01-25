@@ -6,19 +6,169 @@
 #include <SDL2/SDL_image.h>
 #define GLM_SWIZZLE
 #include <glm/gtc/type_ptr.hpp>
-#include <memory>
 #include <stdint.h>
+#include <stddef.h>
 #include "render.h"
 
 constexpr int MAX_PT_LIGHTS = 4;
-bool points[MAX_PT_LIGHTS];
 
-struct Render_Data {
+#define ARRAY_MAX 0xFFFF
+#define INDEX_MASK 0x0000FFFF
+#define KEY_MASK   0xFFFF0000
+
+template <typename T>
+struct Element {
+	T data;
+	int id; // for allocd: upper 16 bits are uniqueish key, lower 16 are index into elems
+	        // for freed:  upper 16 are 0, lower 16 are index of next freed
+};
+
+int
+temp_str_hash(const char *key)
+{
+	unsigned sum = 0;
+	for (int i = 0; i < strlen(key); ++i) {
+		sum += key[i];
+	}
+	return sum % 100;
+}
+
+template <typename V, typename F>
+struct Hash_Table {
+	F hash_fn;
+	V data[100];
+};
+
+Hash_Table<ModelID, int (*)(const char *)> g_model_table;
+
+template<typename V, typename F>
+void
+hsh_init(Hash_Table<V,F> *ht, F hash_fn)
+{
+	ht->hash_fn = hash_fn;
+}
+
+template <typename K, typename V, typename F>
+void
+hsh_add(Hash_Table<V,F> *ht, K key, V val)
+{
+	ht->data[ht->hash_fn(key)] = val;
+}
+
+template <typename K, typename V, typename F>
+V
+hsh_get(const Hash_Table<V,F> &ht, K key)
+{
+	return ht.data[ht.hash_fn(key)];
+}
+
+template <typename T>
+struct Array {
+	int key;
+	int free_head;
+	int last_allocd;
+	int len;
+	Element<T> *elems;
+};
+
+template <typename T>
+void
+arr_init(Array<T> *a)
+{
+	a->key = 1;
+	a->free_head = -1;
+	a->last_allocd = -1;
+	a->len = 2;
+	a->elems = (Element<T> *)malloc(sizeof(Element<T>) * a->len);
+}
+
+template <typename T>
+T *
+arr_alloc(Array<T> *a)
+{
+	int index;
+	if (a->free_head != -1) {
+		index = a->free_head;
+		a->free_head = a->elems[a->free_head].id & INDEX_MASK;
+	} else {
+		if (++a->last_allocd > a->len) {
+			a->len *= 2;
+			assert(a->len <= ARRAY_MAX);
+			a->elems = (Element<T> *)realloc(a->elems, sizeof(Element<T>) * a->len);
+		}
+		index = a->last_allocd;
+	}
+	a->elems[index].id = a->key++ << 16 | index;
+	return &a->elems[index].data;
+}
+
+template <typename T>
+int
+arr_getid(T *data)
+{
+	int i = *(int *)(((char *)data) + offsetof(Element<T>, id));
+	printf("%p %d\n", data, i);
+	return i;
+//	return *(int *)(((char *)data) + offsetof(Element<T>, id));
+}
+
+template <typename T>
+T *
+arr_get(const Array<T> &a, int id)
+{
+	assert(a.elems[id & INDEX_MASK].id == id);
+	return &a.elems[id & INDEX_MASK].data;
+}
+
+template <typename T>
+T *
+arr_first(const Array<T> &a)
+{
+	for (int i = 0; i <= a.last_allocd; ++i) {
+		if (a.elems[i].id & KEY_MASK)
+			return &a.elems[i].data;
+	}
+	return NULL;
+}
+
+template <typename T>
+T *
+arr_next(const Array<T> &a, T *e)
+{
+	int e_ind = arr_getid(e) & INDEX_MASK;
+	for (int i = e_ind+1; i <= a.last_allocd; ++i) {
+		if (a.elems[i].id & KEY_MASK)
+			return &a.elems[i].data;
+	}
+	return NULL;
+}
+
+struct Instance {
 	glm::vec3 pos;
+	glm::vec3 rot;
+	GLfloat scale;
+};
+
+struct Model_Group {
 	GLuint vao;
 	GLuint ibo;
-	size_t num_indices;
+	GLuint num_indices;
+	Array<Instance> instances;
 };
+
+struct Render_Group {
+	GLuint shader;
+	Array<Model_Group> models;
+};
+
+enum Shader_Enum {
+	tex_sh = 0,
+	notex_sh,
+	nolight_sh,
+	num_shaders
+};
+
+Render_Group g_rgroups[num_shaders];
 
 struct Dir_Light {
 	glm::vec4 direction;
@@ -62,22 +212,10 @@ struct Lights {
 
 static GLuint g_tex, g_spec_tex;
 
-struct Render_Group {
-	std::vector<Render_Data> tex;
-	std::vector<Render_Data> notex;
-	std::vector<Render_Data> nolight;
-} g_render_groups;
-
 struct UBO_IDs {
 	GLuint matrices;
 	GLuint lights;
 } g_ubos;
-
-struct Shaders {
-	GLuint tex;
-	GLuint notex;
-	GLuint nolight;
-} g_shaders;
 
 struct Matrices {
 	glm::mat4 proj;
@@ -89,10 +227,11 @@ enum GL_Buffers {
 	norm_buf,
 	ind_buf,
 	tex_buf,
-	num_buffers
+	num_glbuffers
 };
 
-struct Model {
+struct Raw_Model {
+	// TODO get rid of the vectors and just use plain arrays
 	std::optional<std::string> tex_fname;
 	std::vector<GLfloat> vertices;
 	std::vector<GLfloat> tex_coords;
@@ -106,10 +245,8 @@ raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const 
 	float x = (2.0f * screen_ray.x) / scr.w - 1.0f;
 	float y = 1.0f - (2.0f * screen_ray.y) / scr.h;
 	glm::vec4 clip_ray = glm::vec4(x, y, -1.0f, 1.0f);
-//	glm::mat4 projection = glm::perspective(fov, screen_width / screen_height, near_plane, far_plane);
 	glm::vec4 eye_ray = glm::inverse(g_matrices.proj) * clip_ray;
 	eye_ray = glm::vec4(eye_ray.x, eye_ray.y, -1.0f, 0.0f);
-//	glm::mat4 view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
 	glm::vec3 world_ray = glm::normalize((glm::inverse(g_matrices.view) * eye_ray).xyz());
 	float l = glm::dot(world_ray, plane_normal);
 	if (l >= 0.0f && l <= 0.001f) // perpendicular
@@ -124,40 +261,34 @@ raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const 
 void
 mk_point_light(glm::vec3 pos)
 {
-	// TODO: stick lighting data in a uniform buffer obj
-//	glUseProgram(g_tex_lighting_prog);
-//	for (int i = 0; i < max_pt_lights; ++i) {
-//		if (!points[i]) {
-//			points[i] = true;
-//			char buf[256];
-//			sprintf(buf, "points[%d].is_valid", i);
-//			glUniform1i(glGetUniformLocation(g_tex_lighting_prog, buf), true);
-//			sprintf(buf, "points[%d].position", i);
-//			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), pos.x, pos.y + 0.5f, pos.z);
-//			sprintf(buf, "points[%d].ambient", i);
-//			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.05f, 0.05f, 0.05f);
-//			sprintf(buf, "points[%d].diffuse", i);
-//			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.8f, 0.8f, 0.8f);
-//			sprintf(buf, "points[%d].specular", i);
-//			glUniform3f(glGetUniformLocation(g_tex_lighting_prog, buf), 1.0f, 1.0f, 1.0f);
-//			sprintf(buf, "points[%d].constant", i);
-//			glUniform1f(glGetUniformLocation(g_tex_lighting_prog, buf), 1.0f);
-//			sprintf(buf, "points[%d].linear", i);
-//			glUniform1f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.09);
-//			sprintf(buf, "points[%d].quadratic", i);
-//			glUniform1f(glGetUniformLocation(g_tex_lighting_prog, buf), 0.032);
-//			glUseProgram(0);
-//			return;
-//		}
-//	}
-//	zlog_err("Max point lights reached!");
-//	glUseProgram(0);
+	for (int i = 0; i < MAX_PT_LIGHTS; ++i) {
+		if (!g_lights.points[i].is_valid) {
+			g_lights.points[i].is_valid = true;
+			g_lights.points[i].position = glm::vec4(pos, 0.0f);
+			g_lights.points[i].ambient = glm::vec4(0.05f, 0.05f, 0.05f, 0.0f);
+			g_lights.points[i].diffuse = glm::vec4(0.8f, 0.8f, 0.8f, 0.0f);
+			g_lights.points[i].specular = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);
+			g_lights.points[i].constant = 1.0f;
+			g_lights.points[i].linear = 0.09f;
+			g_lights.points[i].quadratic = 0.032f;
+			glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.lights);
+			// just write out the entire point light array for now
+			glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Lights, points), sizeof(g_lights.points), &g_lights.points);
+			glBindBuffer(GL_UNIFORM_BUFFER, 0);
+			return;
+		}
+	}
+	zerror("Max point lights reached!");
 }
 
 // hacky obj (sort of) loader
 bool
-load_model(const char *fname, Model *mi)
+load_model(const char *name, Raw_Model *mi)
 {
+	const char *ext = ".ahh";
+	char fname[strlen(name) + strlen(ext) + 1];
+	strcpy(fname, name);
+	strcat(fname, ext);
 	std::optional<std::string> load = load_file(fname, "r");
 	if (!load)
 		return false;
@@ -231,7 +362,7 @@ load_model(const char *fname, Model *mi)
 }
 
 void
-update_render_view(const Camera &cam)
+render_update_view(const Camera &cam)
 {
 	g_matrices.view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
 	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
@@ -240,7 +371,7 @@ update_render_view(const Camera &cam)
 }
 
 void
-update_render_projection(const Camera &cam, const Screen &scr)
+render_update_projection(const Camera &cam, const Screen &scr)
 {
 	g_matrices.proj = glm::perspective(cam.fov, (float)scr.w / (float)scr.h, cam.near, cam.far);
 	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
@@ -365,15 +496,15 @@ render_init(const Camera &cam, const Screen &scr)
 	glViewport(0, 0, scr.w, scr.h);
 
 	// init shaders
-	{
+	{ // TODO: fix this, make shaders load in batches, use char arrays
 		auto vert = load_file("shader.vert", "r");
 		assert(vert);
 		auto frag = load_file("shader.frag", "r");
 		assert(frag);
 
-		g_shaders.tex = mk_program(vert.value(), frag.value(), "#define TEX\n");
-		g_shaders.nolight = mk_program(vert.value(), frag.value(), "#define NO_LIGHT\n");
-		g_shaders.notex = mk_program(vert.value(), frag.value(), "#define NO_TEX\n");
+		g_rgroups[tex_sh].shader = mk_program(vert.value(), frag.value(), "#define TEX\n");
+		g_rgroups[notex_sh].shader = mk_program(vert.value(), frag.value(), "#define NO_TEX\n");
+		g_rgroups[nolight_sh].shader = mk_program(vert.value(), frag.value(), "#define NO_LIGHT\n");
 	}
 
 	// load textures
@@ -398,9 +529,9 @@ render_init(const Camera &cam, const Screen &scr)
 
 	// init matrix ubo
 	{
-		set_bind_pt(g_shaders.tex, "Matrices", 0);
-		set_bind_pt(g_shaders.notex, "Matrices", 0);
-		set_bind_pt(g_shaders.nolight, "Matrices", 0);
+		set_bind_pt(g_rgroups[tex_sh].shader, "Matrices", 0);
+		set_bind_pt(g_rgroups[notex_sh].shader, "Matrices", 0);
+		set_bind_pt(g_rgroups[nolight_sh].shader, "Matrices", 0);
 		glGenBuffers(1, &g_ubos.matrices);
 
 		g_matrices.view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
@@ -413,8 +544,8 @@ render_init(const Camera &cam, const Screen &scr)
 
 	// init light ubo
 	{
-		set_bind_pt(g_shaders.tex, "Lights", 1);
-		set_bind_pt(g_shaders.notex, "Lights", 1);
+		set_bind_pt(g_rgroups[tex_sh].shader, "Lights", 1);
+		set_bind_pt(g_rgroups[notex_sh].shader, "Lights", 1);
 		glGenBuffers(1, &g_ubos.lights);
 
 		g_lights.dir.direction = glm::vec4(-0.2f, -1.0f, -0.3f, 0.0f);
@@ -432,7 +563,6 @@ render_init(const Camera &cam, const Screen &scr)
 		for (int i = 0; i < MAX_PT_LIGHTS; ++i) {
 			g_lights.points[i].is_valid = false;
 		}
-
 		glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.lights);
 		glBufferData(GL_UNIFORM_BUFFER, sizeof(Lights), &g_lights, GL_STATIC_DRAW);
 		glBindBuffer(GL_UNIFORM_BUFFER, 0);
@@ -441,81 +571,105 @@ render_init(const Camera &cam, const Screen &scr)
 
 	// init material uniform
 	{
-		glUseProgram(g_shaders.tex);
-		glUniform3f(glGetUniformLocation(g_shaders.tex, "mat.ambient"),  1.0f, 0.5f, 0.31f);
-		//glUniform3f(glGetUniformLocation(g_shaders.tex, "mat.diffuse"),  1.0f, 0.5f, 0.31f);
-		//glUniform3f(glGetUniformLocation(g_shaders.tex, "mat.specular"), 0.5f, 0.5f, 0.5f);
-		glUniform1i(glGetUniformLocation(g_shaders.tex, "mat.diffuse"), 0);
-		//glUniform1i(glGetUniformLocation(g_shaders.tex, "mat.specular"), 1);
-		glUniform1f(glGetUniformLocation(g_shaders.tex, "mat.shininess"), 64.0f);
+		glUseProgram(g_rgroups[tex_sh].shader);
+		glUniform3f(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.ambient"),  1.0f, 0.5f, 0.31f);
+		//glUniform3f(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.diffuse"),  1.0f, 0.5f, 0.31f);
+		//glUniform3f(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.specular"), 0.5f, 0.5f, 0.5f);
+		glUniform1i(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.diffuse"), 0);
+		//glUniform1i(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.specular"), 1);
+		glUniform1f(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.shininess"), 64.0f);
 		glUseProgram(0);
 	}
 
-	// init vertex array objects
+	// load models
 	{
-		auto mk_render_data = [](const Model *m, const GLuint vao, const GLuint *buf_ids) {
-			glBindVertexArray(vao);
-			glBindBuffer(GL_ARRAY_BUFFER, buf_ids[vert_buf]);
-			glBufferData(GL_ARRAY_BUFFER, m->vertices.size() * sizeof(GLfloat), m->vertices.data(), GL_STATIC_DRAW);
+		arr_init(&g_rgroups[tex_sh].models);
+		arr_init(&g_rgroups[notex_sh].models);
+		arr_init(&g_rgroups[nolight_sh].models);
+		hsh_init(&g_model_table, temp_str_hash);
+		const char *mnames[] = { "cube" };
+		constexpr int num_models = sizeof(mnames)/sizeof(mnames[0]);
+
+		Raw_Model rawms[num_models];
+		GLuint vao_ids[num_models];
+		GLuint buf_ids[num_models*num_glbuffers];
+		glGenVertexArrays(num_models, vao_ids);
+		glGenBuffers(num_models*num_glbuffers, buf_ids);
+
+		for (int i = 0; i < num_models; ++i) {
+			bool succ = load_model(mnames[i], &rawms[i]);
+			if (!succ) {
+				zerror("failed to load model %s", mnames[i]);
+				continue;
+			}
+			GLuint cur_vao = vao_ids[i];
+			GLuint *cur_bufs = &buf_ids[i*num_glbuffers];
+			Raw_Model *rm = &rawms[i];
+
+			glBindVertexArray(cur_vao);
+			glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[vert_buf]);
+			glBufferData(GL_ARRAY_BUFFER, rm->vertices.size() * sizeof(GLfloat), rm->vertices.data(), GL_STATIC_DRAW);
 			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 			glEnableVertexAttribArray(0);
 	
-			glBindBuffer(GL_ARRAY_BUFFER, buf_ids[norm_buf]);
-			glBufferData(GL_ARRAY_BUFFER, m->normals.size() * sizeof(GLfloat), m->normals.data(), GL_STATIC_DRAW);
+			glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[norm_buf]);
+			glBufferData(GL_ARRAY_BUFFER, rm->normals.size() * sizeof(GLfloat), rm->normals.data(), GL_STATIC_DRAW);
 			glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 			glEnableVertexAttribArray(1);
-	
-			if (m->tex_coords.size()) {
-				glBindBuffer(GL_ARRAY_BUFFER, buf_ids[tex_buf]);
-				glBufferData(GL_ARRAY_BUFFER, m->tex_coords.size() * sizeof(GLfloat), m->tex_coords.data(), GL_STATIC_DRAW);
+
+			if (rm->tex_coords.size()) {
+				glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[tex_buf]);
+				glBufferData(GL_ARRAY_BUFFER, rm->tex_coords.size() * sizeof(GLfloat), rm->tex_coords.data(), GL_STATIC_DRAW);
 				glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 				glEnableVertexAttribArray(2);
 			}
 	
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buf_ids[ind_buf]);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, m->indices.size() * sizeof(GLuint), m->indices.data(), GL_STATIC_DRAW);
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cur_bufs[ind_buf]);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm->indices.size() * sizeof(GLuint), rm->indices.data(), GL_STATIC_DRAW);
 	
-			return Render_Data { glm::vec3(0.0f), vao, buf_ids[ind_buf], m->indices.size() };
-		};
-
-		const char *fnames[] = { "cube.ahh" };
-		constexpr int num_files = sizeof(fnames) / sizeof(fnames[0]);
-		constexpr int max_models = num_files;
-		constexpr int max_array_objs = max_models;
-		constexpr int max_buffer_objs = max_models * num_buffers;
-
-		Model ms[max_models];
-		GLuint arr_ids[max_array_objs];
-		GLuint buf_ids[max_buffer_objs];
-		glGenVertexArrays(max_array_objs, arr_ids);
-		glGenBuffers(max_buffer_objs, buf_ids);
-
-		for (int i = 0; i < num_files; ++i) {
-			bool succ = load_model(fnames[i], &ms[i]);
-			if (succ)
-				g_render_groups.tex.push_back(mk_render_data(&ms[i], arr_ids[i], &buf_ids[i*num_buffers]));
+			Model_Group *finm = arr_alloc(&g_rgroups[tex_sh].models);
+			finm->vao = cur_vao;
+			finm->ibo = cur_bufs[ind_buf];
+			finm->num_indices = rm->indices.size();
+			int model_id = arr_getid(finm);
+			int rgroup_id = tex_sh;
+			hsh_add(&g_model_table, mnames[i], {rgroup_id, model_id});
+			arr_init(&finm->instances);
 		}
 		glBindVertexArray(0);
 	}
+}
+
+RenderID
+render_add(const char *name)
+{
+	ModelID mid = hsh_get(g_model_table, name);
+	Model_Group *mg = arr_get(g_rgroups[mid.rgroup_id].models, mid.mgroup_id);
+	Instance *in = arr_alloc(&mg->instances);
+	return { mid.rgroup_id, mid.mgroup_id, arr_getid(in) };
 }
 
 void
 render(const Camera &cam)
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	glUseProgram(g_shaders.tex);
-	GLint model_loc = glGetUniformLocation(g_shaders.tex, "u_model");
 	glm::mat4 model;
-	for (const Render_Data &rd : g_render_groups.tex) {
-		model = glm::translate(model, rd.pos);
-		model = glm::scale(model, glm::vec3(1.0f));
-
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, g_tex);
-		glBindVertexArray(rd.vao);
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, rd.ibo);
-		glUniformMatrix4fv(model_loc, 1, GL_FALSE, glm::value_ptr(model));
-		glDrawElements(GL_TRIANGLES, rd.num_indices, GL_UNSIGNED_INT, 0);
+	for (int i = 0; i < num_shaders; ++i) {
+		glUseProgram(g_rgroups[i].shader);
+		GLint model_loc = glGetUniformLocation(g_rgroups[i].shader, "u_model");
+		for (Model_Group *m = arr_first(g_rgroups[i].models); m; m = arr_next(g_rgroups[i].models, m)) {
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, g_tex);
+			glBindVertexArray(m->vao);
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m->ibo);
+			for (Instance *in = arr_first(m->instances); in; arr_next(m->instances, in)) {
+				model = glm::translate(model, in->pos);
+//				model = glm::scale(model, in->scale);
+//				model = glm::rotate(model, 50.0f, glm::vec3(0, 1, 1));
+				glUniformMatrix4fv(model_loc, 1, GL_FALSE, glm::value_ptr(model));
+				glDrawElements(GL_TRIANGLES, m->num_indices, GL_UNSIGNED_INT, 0);
+			}
+		}
 	}
 	glBindVertexArray(0);
 	glUseProgram(0);

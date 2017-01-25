@@ -185,7 +185,7 @@ main()
 	constexpr int SKIP_TICKS = 1000/TICKS_PER_SECOND;
 	constexpr int MAX_FRAMESKIP = 5;
 
-	//SDL_SetRelativeMouseMode(SDL_TRUE);
+	SDL_SetRelativeMouseMode(SDL_TRUE);
 	Keyboard kb = { {0}, {0} };
 	Camera cam = { 0.0f, 0.0f, 0.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 45.0f, 0.1f, 100.0f };
 	Mouse mouse = { {400, 300}, {400, 300}, 0.1f, {false, false, false} };
@@ -229,7 +229,7 @@ main()
 				while (next_tick < SDL_GetTicks() && num_updates < MAX_FRAMESKIP) {
 					state = process_input(&kb, &mouse, screen, cam);
 					update_camera(mouse, &kb, &cam);
-					update_render_view(cam);
+					render_update_view(cam);
 					next_tick += SKIP_TICKS;
 					++num_updates;
 				}
