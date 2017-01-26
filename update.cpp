@@ -20,15 +20,11 @@ update_init()
 	// init entities
 	{
 		for (int i = 0; i < NUM_CUBES; ++i) {
-			g_cubes[i].model.pos.x = 30.0f * i;
-			g_cubes[i].model.pos.y = 30.0f * i;
-			g_cubes[i].model.pos.z = 30.0f * i;
-			g_cubes[i].model.rid = render_add("cube");
+			g_cubes[i].model.pos.x = 10.0f * i;
+			g_cubes[i].model.pos.y = 10.0f * i;
+			g_cubes[i].model.pos.z = 10.0f * i;
+			g_cubes[i].model.rid = render_add("cube", g_cubes[i].model.pos);
 		}
-//		g_entities.count = 0;
-//		g_entities.next_key = 1;
-//		g_entities.max_used = 0;
-//		g_entities.free_head = 0;
 	}
 
 }
@@ -36,9 +32,8 @@ update_init()
 void
 update()
 {
-/*	for (int i = 0; i < NUM_CUBES; ++i) {
-		g_cubes[i].pos.y += .01f;
-		render_update_ent(g_cubes[i].ent.rid, g_cubes[i].pos);
+	for (int i = 0; i < NUM_CUBES; ++i) {
+		g_cubes[i].model.pos.y += .05f;
+		render_update_instance(g_cubes[i].model.rid, g_cubes[i].model.pos);
 	}
-*/
 }

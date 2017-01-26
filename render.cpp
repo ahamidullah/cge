@@ -91,7 +91,7 @@ arr_alloc(Array<T> *a)
 		index = a->free_head;
 		a->free_head = a->elems[a->free_head].id & INDEX_MASK;
 	} else {
-		if (++a->last_allocd > a->len) {
+		if (++a->last_allocd >= a->len) {
 			a->len *= 2;
 			assert(a->len <= ARRAY_MAX);
 			a->elems = (Element<T> *)realloc(a->elems, sizeof(Element<T>) * a->len);
@@ -106,10 +106,7 @@ template <typename T>
 int
 arr_getid(T *data)
 {
-	int i = *(int *)(((char *)data) + offsetof(Element<T>, id));
-	printf("%p %d\n", data, i);
-	return i;
-//	return *(int *)(((char *)data) + offsetof(Element<T>, id));
+	return *(int *)(((char *)data) + offsetof(Element<T>, id));
 }
 
 template <typename T>
@@ -125,7 +122,7 @@ T *
 arr_first(const Array<T> &a)
 {
 	for (int i = 0; i <= a.last_allocd; ++i) {
-		if (a.elems[i].id & KEY_MASK)
+		if ((a.elems[i].id & KEY_MASK) >> 16)
 			return &a.elems[i].data;
 	}
 	return NULL;
@@ -137,7 +134,7 @@ arr_next(const Array<T> &a, T *e)
 {
 	int e_ind = arr_getid(e) & INDEX_MASK;
 	for (int i = e_ind+1; i <= a.last_allocd; ++i) {
-		if (a.elems[i].id & KEY_MASK)
+		if ((a.elems[i].id & KEY_MASK) >> 16)
 			return &a.elems[i].data;
 	}
 	return NULL;
@@ -231,12 +228,15 @@ enum GL_Buffers {
 };
 
 struct Raw_Model {
-	// TODO get rid of the vectors and just use plain arrays
 	std::optional<std::string> tex_fname;
-	std::vector<GLfloat> vertices;
-	std::vector<GLfloat> tex_coords;
-	std::vector<GLfloat> normals;
-	std::vector<GLuint> indices;
+	GLfloat *vertices;
+	GLfloat *tex_coords;
+	GLfloat *normals;
+	GLuint *indices;
+	size_t num_inds;
+	size_t num_verts;
+	size_t num_tcoords;
+	size_t num_norms;
 };
 
 std::optional<glm::vec3>
@@ -283,10 +283,10 @@ mk_point_light(glm::vec3 pos)
 
 // hacky obj (sort of) loader
 bool
-load_model(const char *name, Raw_Model *mi)
+load_model(const char *name, Raw_Model *rm)
 {
 	const char *ext = ".ahh";
-	char fname[strlen(name) + strlen(ext) + 1];
+	char fname[256];
 	strcpy(fname, name);
 	strcat(fname, ext);
 	std::optional<std::string> load = load_file(fname, "r");
@@ -294,32 +294,36 @@ load_model(const char *name, Raw_Model *mi)
 		return false;
 	const std::string &data = load.value();
 
-	size_t num_verts = 0;
-	size_t num_norms = 0;
-	size_t num_inds = 0;
-	size_t num_texcs = 0;
+	size_t total_verts = 0;
+	size_t total_norms = 0;
+	size_t total_inds = 0;
+	size_t total_tcoords = 0;
 
-	for (uint64_t i = 0; data[i]; ++i) {
+	for (int i = 0; data[i]; ++i) {
 		if (data[i] == 'v') {
 			if (data[i+1] == 't')
-				num_texcs += 2;
+				total_tcoords += 2;
 			else if (data[i+1] == 'n')
-				num_norms += 3;
+				total_norms += 3;
 			else if (data[i+1] == ' ')
-				num_verts += 3;
+				total_verts += 3;
 		} else if (data[i] == 'f') {
-			num_inds += 3;
+			total_inds += 3;
 		}
 		while (data[i] && data[i] != '\n') ++i;
 	}
 
-	mi->vertices.reserve(num_verts);
-	mi->normals.reserve(num_norms);
-	mi->indices.reserve(num_inds);
-	mi->tex_coords.reserve(num_texcs);
-	mi->tex_fname = {};
-		
-	for (uint64_t i = 0; data[i]; ++i) {
+	rm->vertices = (GLfloat *)malloc(sizeof(GLfloat)*(total_verts));
+	rm->num_verts = 0;
+	rm->normals = (GLfloat *)malloc(sizeof(GLfloat)*(total_norms));
+	rm->num_norms = 0;
+	rm->indices = (GLuint *)malloc(sizeof(GLuint)*(total_inds));
+	rm->num_inds = 0;
+	rm->tex_coords = (GLfloat *)malloc(sizeof(GLfloat)*(total_tcoords));
+	rm->num_tcoords = 0;
+	rm->tex_fname = {};
+
+	for (int i = 0; data[i]; ++i) {
 		if (data[i] == 't' && data[i+1] == 'f') {
 			char tex[256];
 			// doesn't work if texture filename has spaces...
@@ -327,34 +331,46 @@ load_model(const char *name, Raw_Model *mi)
 				zerror("obj error: could not parse texture file name in file %s\n", fname);
 				return false;
 			}
-			mi->tex_fname = std::string(tex);
+			rm->tex_fname = std::string(tex);
 		}
 		if (data[i] == 'v') {
 			if (data[i+1] == 't') {
 				GLfloat t1, t2;
 				if (sscanf(&data[i+2], "%f %f", &t1, &t2) < 2) {
-					zerror("obj parser error in file %s\n", fname);
+					zerror("parser error in %s around %d -- expected tex coords\n", fname, i);
 					return false;
 				}
-				mi->tex_coords.insert(mi->tex_coords.end(), { t1, t2 });
-			} else {
+				rm->tex_coords[rm->num_tcoords++] = t1;
+				rm->tex_coords[rm->num_tcoords++] = t2;
+			} else if (data[i+1] == 'n') {
+				GLfloat n1, n2, n3;
+				if (sscanf(&data[i+2], "%f %f %f", &n1, &n2, &n3) < 3) {
+					zerror("parser error in %s around %d -- expected normals\n", fname, i);
+					return false;
+				}
+				rm->normals[rm->num_norms++] = n1;
+				rm->normals[rm->num_norms++] = n2;
+				rm->normals[rm->num_norms++] = n3;
+			} else if (data[i+1] == ' ') {
 				GLfloat v1, v2, v3;
 				if (sscanf(&data[i+2], "%f %f %f", &v1, &v2, &v3) < 3) {
-					zerror("obj parser error in file %s\n", fname);
+					zerror("parser error in %s around %d -- expected vertices\n", fname, i);
 					return false;
 				}
-				if (data[i+1] == ' ')
-					mi->vertices.insert(mi->vertices.end(), { v1, v2, v3 });
-				else if (data[i+1] == 'n')
-					mi->normals.insert(mi->normals.end(), { v1, v2, v3 });
-			}
+				rm->vertices[rm->num_verts++] = v1;
+				rm->vertices[rm->num_verts++] = v2;
+				rm->vertices[rm->num_verts++] = v3;
+			} else
+				zerror("parser error in %s around %d -- syntax error\n", fname, i);
 		} else if (data[i] == 'f') {
 			GLuint i1, i2, i3;
 			if (sscanf(&data[i+1], "%u %u %u", &i1, &i2, &i3) < 3) {
-				zerror("obj parser error in file %s\n", fname);
+				zerror("parser error in %s around %d -- expected indices\n", fname, i);
 				return false;
 			}
-			mi->indices.insert(mi->indices.end(), { i1, i2, i3 });
+			rm->indices[rm->num_inds++] = i1;
+			rm->indices[rm->num_inds++] = i2;
+			rm->indices[rm->num_inds++] = i3;
 		}
 		while (data[i] && data[i] != '\n') ++i;
 	}
@@ -605,32 +621,31 @@ render_init(const Camera &cam, const Screen &scr)
 			GLuint cur_vao = vao_ids[i];
 			GLuint *cur_bufs = &buf_ids[i*num_glbuffers];
 			Raw_Model *rm = &rawms[i];
-
 			glBindVertexArray(cur_vao);
 			glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[vert_buf]);
-			glBufferData(GL_ARRAY_BUFFER, rm->vertices.size() * sizeof(GLfloat), rm->vertices.data(), GL_STATIC_DRAW);
+			glBufferData(GL_ARRAY_BUFFER, rm->num_verts*sizeof(GLfloat), rm->vertices, GL_STATIC_DRAW);
 			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 			glEnableVertexAttribArray(0);
 	
 			glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[norm_buf]);
-			glBufferData(GL_ARRAY_BUFFER, rm->normals.size() * sizeof(GLfloat), rm->normals.data(), GL_STATIC_DRAW);
+			glBufferData(GL_ARRAY_BUFFER, rm->num_norms*sizeof(GLfloat), rm->normals, GL_STATIC_DRAW);
 			glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 			glEnableVertexAttribArray(1);
 
-			if (rm->tex_coords.size()) {
+			if (rm->num_tcoords) {
 				glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[tex_buf]);
-				glBufferData(GL_ARRAY_BUFFER, rm->tex_coords.size() * sizeof(GLfloat), rm->tex_coords.data(), GL_STATIC_DRAW);
+				glBufferData(GL_ARRAY_BUFFER, rm->num_tcoords*sizeof(GLfloat), rm->tex_coords, GL_STATIC_DRAW);
 				glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 				glEnableVertexAttribArray(2);
 			}
 	
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cur_bufs[ind_buf]);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm->indices.size() * sizeof(GLuint), rm->indices.data(), GL_STATIC_DRAW);
-	
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm->num_inds*sizeof(GLuint), rm->indices, GL_STATIC_DRAW);
+
 			Model_Group *finm = arr_alloc(&g_rgroups[tex_sh].models);
 			finm->vao = cur_vao;
 			finm->ibo = cur_bufs[ind_buf];
-			finm->num_indices = rm->indices.size();
+			finm->num_indices = rm->num_inds;
 			int model_id = arr_getid(finm);
 			int rgroup_id = tex_sh;
 			hsh_add(&g_model_table, mnames[i], {rgroup_id, model_id});
@@ -641,12 +656,21 @@ render_init(const Camera &cam, const Screen &scr)
 }
 
 RenderID
-render_add(const char *name)
+render_add(const char *name, const glm::vec3 &pos)
 {
 	ModelID mid = hsh_get(g_model_table, name);
 	Model_Group *mg = arr_get(g_rgroups[mid.rgroup_id].models, mid.mgroup_id);
 	Instance *in = arr_alloc(&mg->instances);
+	in->pos = pos;
 	return { mid.rgroup_id, mid.mgroup_id, arr_getid(in) };
+}
+
+void
+render_update_instance(RenderID rid, const glm::vec3 &pos)
+{
+	Model_Group *mg = arr_get(g_rgroups[rid.rgroup_id].models, rid.mgroup_id);
+	Instance *in = arr_get(mg->instances, rid.instance_id);
+	in->pos = pos;
 }
 
 void
@@ -662,7 +686,7 @@ render(const Camera &cam)
 			glBindTexture(GL_TEXTURE_2D, g_tex);
 			glBindVertexArray(m->vao);
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m->ibo);
-			for (Instance *in = arr_first(m->instances); in; arr_next(m->instances, in)) {
+			for (Instance *in = arr_first(m->instances); in; in = arr_next(m->instances, in)) {
 				model = glm::translate(model, in->pos);
 //				model = glm::scale(model, in->scale);
 //				model = glm::rotate(model, 50.0f, glm::vec3(0, 1, 1));

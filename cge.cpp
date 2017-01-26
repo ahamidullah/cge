@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "render.h"
+#include "update.h"
 #include "zlib.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -187,7 +188,7 @@ main()
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 	Keyboard kb = { {0}, {0} };
-	Camera cam = { 0.0f, 0.0f, 0.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 45.0f, 0.1f, 100.0f };
+	Camera cam = { 0.0f, 0.0f, 1.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 45.0f, 0.1f, 100.0f };
 	Mouse mouse = { {400, 300}, {400, 300}, 0.1f, {false, false, false} };
 	Screen screen = { 800, 600 };
 	SDL_Window *window;
@@ -217,6 +218,7 @@ main()
 	}
 
 	render_init(cam, screen);
+	update_init();
 
 	program_state state = run_state;
 	int num_updates = 0;
@@ -230,6 +232,7 @@ main()
 					state = process_input(&kb, &mouse, screen, cam);
 					update_camera(mouse, &kb, &cam);
 					render_update_view(cam);
+					update();
 					next_tick += SKIP_TICKS;
 					++num_updates;
 				}
