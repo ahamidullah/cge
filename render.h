@@ -38,7 +38,7 @@ struct Screen {
 
 void render_init(const Camera &, const Screen &);
 void render_update_view(const Camera &);
-RenderID render_add(const char *, const glm::vec3 &);
+RenderID render_add_instance(const char *, const glm::vec3 &);
 void render_update_instance(RenderID, const glm::vec3 &);
 void render(const Camera &cam);
 void mk_point_light(glm::vec3 pos);

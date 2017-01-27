@@ -12,17 +12,6 @@
 
 constexpr int MAX_PT_LIGHTS = 4;
 
-#define ARRAY_MAX 0xFFFF
-#define INDEX_MASK 0x0000FFFF
-#define KEY_MASK   0xFFFF0000
-
-template <typename T>
-struct Element {
-	T data;
-	int id; // for allocd: upper 16 bits are uniqueish key, lower 16 are index into elems
-	        // for freed:  upper 16 are 0, lower 16 are index of next freed
-};
-
 int
 temp_str_hash(const char *key)
 {
@@ -31,113 +20,6 @@ temp_str_hash(const char *key)
 		sum += key[i];
 	}
 	return sum % 100;
-}
-
-template <typename V, typename F>
-struct Hash_Table {
-	F hash_fn;
-	V data[100];
-};
-
-Hash_Table<ModelID, int (*)(const char *)> g_model_table;
-
-template<typename V, typename F>
-void
-hsh_init(Hash_Table<V,F> *ht, F hash_fn)
-{
-	ht->hash_fn = hash_fn;
-}
-
-template <typename K, typename V, typename F>
-void
-hsh_add(Hash_Table<V,F> *ht, K key, V val)
-{
-	ht->data[ht->hash_fn(key)] = val;
-}
-
-template <typename K, typename V, typename F>
-V
-hsh_get(const Hash_Table<V,F> &ht, K key)
-{
-	return ht.data[ht.hash_fn(key)];
-}
-
-template <typename T>
-struct Array {
-	int key;
-	int free_head;
-	int last_allocd;
-	int len;
-	Element<T> *elems;
-};
-
-template <typename T>
-void
-arr_init(Array<T> *a)
-{
-	a->key = 1;
-	a->free_head = -1;
-	a->last_allocd = -1;
-	a->len = 2;
-	a->elems = (Element<T> *)malloc(sizeof(Element<T>) * a->len);
-}
-
-template <typename T>
-T *
-arr_alloc(Array<T> *a)
-{
-	int index;
-	if (a->free_head != -1) {
-		index = a->free_head;
-		a->free_head = a->elems[a->free_head].id & INDEX_MASK;
-	} else {
-		if (++a->last_allocd >= a->len) {
-			a->len *= 2;
-			assert(a->len <= ARRAY_MAX);
-			a->elems = (Element<T> *)realloc(a->elems, sizeof(Element<T>) * a->len);
-		}
-		index = a->last_allocd;
-	}
-	a->elems[index].id = a->key++ << 16 | index;
-	return &a->elems[index].data;
-}
-
-template <typename T>
-int
-arr_getid(T *data)
-{
-	return *(int *)(((char *)data) + offsetof(Element<T>, id));
-}
-
-template <typename T>
-T *
-arr_get(const Array<T> &a, int id)
-{
-	assert(a.elems[id & INDEX_MASK].id == id);
-	return &a.elems[id & INDEX_MASK].data;
-}
-
-template <typename T>
-T *
-arr_first(const Array<T> &a)
-{
-	for (int i = 0; i <= a.last_allocd; ++i) {
-		if ((a.elems[i].id & KEY_MASK) >> 16)
-			return &a.elems[i].data;
-	}
-	return NULL;
-}
-
-template <typename T>
-T *
-arr_next(const Array<T> &a, T *e)
-{
-	int e_ind = arr_getid(e) & INDEX_MASK;
-	for (int i = e_ind+1; i <= a.last_allocd; ++i) {
-		if ((a.elems[i].id & KEY_MASK) >> 16)
-			return &a.elems[i].data;
-	}
-	return NULL;
 }
 
 struct Instance {
@@ -164,8 +46,6 @@ enum Shader_Enum {
 	nolight_sh,
 	num_shaders
 };
-
-Render_Group g_rgroups[num_shaders];
 
 struct Dir_Light {
 	glm::vec4 direction;
@@ -200,35 +80,33 @@ struct Point_Light {
 	bool is_valid;
 };
 
-// cpu copy of shader ubo light structures
+// cpu copy of frag shader ubo light structures (matching alignment)
 struct Lights {
 	alignas(16) Dir_Light dir;
 	alignas(16) Spot_Light spot;
 	alignas(16) Point_Light points[MAX_PT_LIGHTS];
-} g_lights;
+};
 
-static GLuint g_tex, g_spec_tex;
-
-struct UBO_IDs {
+struct Ubo_Ids {
 	GLuint matrices;
 	GLuint lights;
-} g_ubos;
+};
 
 struct Matrices {
 	glm::mat4 proj;
 	glm::mat4 view;
-} g_matrices;
+};
 
 enum GL_Buffers {
 	vert_buf = 0,
 	norm_buf,
 	ind_buf,
 	tex_buf,
-	num_glbuffers
+	num_glbufs
 };
 
 struct Raw_Model {
-	std::optional<std::string> tex_fname;
+	char *tex_fname;
 	GLfloat *vertices;
 	GLfloat *tex_coords;
 	GLfloat *normals;
@@ -238,6 +116,13 @@ struct Raw_Model {
 	size_t num_tcoords;
 	size_t num_norms;
 };
+
+static Hash_Table<ModelID, int (*)(const char *)> g_model_table;
+static Render_Group g_rgroups[num_shaders];
+static Lights g_lights;
+static Matrices g_matrices;
+static Ubo_Ids g_ubos;
+static GLuint g_tex, g_spec_tex;
 
 std::optional<glm::vec3>
 raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Screen &scr)
@@ -281,118 +166,107 @@ mk_point_light(glm::vec3 pos)
 	zerror("Max point lights reached!");
 }
 
-// hacky obj (sort of) loader
-bool
-load_model(const char *name, Raw_Model *rm)
+// obj (sort of) loader
+static void
+load_raw_models(const char **names, Raw_Model *rms, bool *succs, int num)
 {
 	const char *ext = ".ahh";
-	char fname[256];
-	strcpy(fname, name);
-	strcat(fname, ext);
-	std::optional<std::string> load = load_file(fname, "r");
-	if (!load)
-		return false;
-	const std::string &data = load.value();
-
-	size_t total_verts = 0;
-	size_t total_norms = 0;
-	size_t total_inds = 0;
-	size_t total_tcoords = 0;
-
-	for (int i = 0; data[i]; ++i) {
-		if (data[i] == 'v') {
-			if (data[i+1] == 't')
-				total_tcoords += 2;
-			else if (data[i+1] == 'n')
-				total_norms += 3;
-			else if (data[i+1] == ' ')
-				total_verts += 3;
-		} else if (data[i] == 'f') {
-			total_inds += 3;
+	for (int i = 0; i < num; ++i) {
+		char fname[256]; // temp
+		strcpy(fname, names[i]);
+		strcat(fname, ext);
+		char *data = load_file(fname, "r");
+		if (!data) {
+			succs[i] = false;
+			continue;
 		}
-		while (data[i] && data[i] != '\n') ++i;
-	}
-
-	rm->vertices = (GLfloat *)malloc(sizeof(GLfloat)*(total_verts));
-	rm->num_verts = 0;
-	rm->normals = (GLfloat *)malloc(sizeof(GLfloat)*(total_norms));
-	rm->num_norms = 0;
-	rm->indices = (GLuint *)malloc(sizeof(GLuint)*(total_inds));
-	rm->num_inds = 0;
-	rm->tex_coords = (GLfloat *)malloc(sizeof(GLfloat)*(total_tcoords));
-	rm->num_tcoords = 0;
-	rm->tex_fname = {};
-
-	for (int i = 0; data[i]; ++i) {
-		if (data[i] == 't' && data[i+1] == 'f') {
-			char tex[256];
-			// doesn't work if texture filename has spaces...
-			if (sscanf(&data[i], "tf %s", tex) < 1) {
-				zerror("obj error: could not parse texture file name in file %s\n", fname);
-				return false;
+		size_t total_verts = 0;
+		size_t total_norms = 0;
+		size_t total_inds = 0;
+		size_t total_tcoords = 0;
+		for (int j = 0; data[j]; ++j) {
+			if (data[j] == 'v') {
+				if (data[j+1] == 't')
+					total_tcoords += 2;
+				else if (data[j+1] == 'n')
+					total_norms += 3;
+				else if (data[j+1] == ' ')
+					total_verts += 3;
+			} else if (data[j] == 'f') {
+				total_inds += 3;
 			}
-			rm->tex_fname = std::string(tex);
+			while (data[j] && data[j] != '\n') ++j;
 		}
-		if (data[i] == 'v') {
-			if (data[i+1] == 't') {
-				GLfloat t1, t2;
-				if (sscanf(&data[i+2], "%f %f", &t1, &t2) < 2) {
-					zerror("parser error in %s around %d -- expected tex coords\n", fname, i);
-					return false;
-				}
-				rm->tex_coords[rm->num_tcoords++] = t1;
-				rm->tex_coords[rm->num_tcoords++] = t2;
-			} else if (data[i+1] == 'n') {
-				GLfloat n1, n2, n3;
-				if (sscanf(&data[i+2], "%f %f %f", &n1, &n2, &n3) < 3) {
-					zerror("parser error in %s around %d -- expected normals\n", fname, i);
-					return false;
-				}
-				rm->normals[rm->num_norms++] = n1;
-				rm->normals[rm->num_norms++] = n2;
-				rm->normals[rm->num_norms++] = n3;
-			} else if (data[i+1] == ' ') {
-				GLfloat v1, v2, v3;
-				if (sscanf(&data[i+2], "%f %f %f", &v1, &v2, &v3) < 3) {
-					zerror("parser error in %s around %d -- expected vertices\n", fname, i);
-					return false;
-				}
-				rm->vertices[rm->num_verts++] = v1;
-				rm->vertices[rm->num_verts++] = v2;
-				rm->vertices[rm->num_verts++] = v3;
+	
+		rms[i].vertices = (GLfloat *)malloc(sizeof(GLfloat)*(total_verts));
+		rms[i].num_verts = 0;
+		rms[i].normals = (GLfloat *)malloc(sizeof(GLfloat)*(total_norms));
+		rms[i].num_norms = 0;
+		rms[i].indices = (GLuint *)malloc(sizeof(GLuint)*(total_inds));
+		rms[i].num_inds = 0;
+		rms[i].tex_coords = (GLfloat *)malloc(sizeof(GLfloat)*(total_tcoords));
+		rms[i].num_tcoords = 0;
+		rms[i].tex_fname = NULL;
+	
+		for (int j = 0; data[j]; ++j) {
+			if (data[j] == 't' && data[j+1] == 'f') {
+				rms[i].tex_fname = (char *)malloc(256); // temp
+				// doesn't work if texture filename has spaces...
+				if (sscanf(&data[j], "tf %s", rms[i].tex_fname) < 1)
+					zerror("obj error: could not parse texture file name in file %s\n", fname);
+			} else if (data[j] == 'v') {
+				if (data[j+1] == 't') {
+					GLfloat t1, t2;
+					if (sscanf(&data[j+2], "%f %f", &t1, &t2) == 2) {
+						rms[i].tex_coords[rms[i].num_tcoords++] = t1;
+						rms[i].tex_coords[rms[i].num_tcoords++] = t2;
+					} else
+						zerror("parser error in %s around %d -- expected tex coords\n", fname, j);
+				} else if (data[j+1] == 'n') {
+					GLfloat n1, n2, n3;
+					if (sscanf(&data[j+2], "%f %f %f", &n1, &n2, &n3) == 3) {
+						rms[i].normals[rms[i].num_norms++] = n1;
+						rms[i].normals[rms[i].num_norms++] = n2;
+						rms[i].normals[rms[i].num_norms++] = n3;
+					} else
+						zerror("parser error in %s around %d -- expected normals\n", fname, j);
+				} else if (data[j+1] == ' ') {
+					GLfloat v1, v2, v3;
+					if (sscanf(&data[j+2], "%f %f %f", &v1, &v2, &v3) == 3) {
+						rms[i].vertices[rms[i].num_verts++] = v1;
+						rms[i].vertices[rms[i].num_verts++] = v2;
+						rms[i].vertices[rms[i].num_verts++] = v3;
+					} else
+						zerror("parser error in %s around %d -- expected vertices\n", fname, j);
+				} else
+					zerror("parser error in %s around %d -- syntax error\n", fname, j);
+			} else if (data[j] == 'f') {
+				GLuint i1, i2, i3;
+				if (sscanf(&data[j+1], "%u %u %u", &i1, &i2, &i3) == 3) {
+					rms[i].indices[rms[i].num_inds++] = i1;
+					rms[i].indices[rms[i].num_inds++] = i2;
+					rms[i].indices[rms[i].num_inds++] = i3;
+				} else
+					zerror("parser error in %s around %d -- expected indices\n", fname, j);
 			} else
-				zerror("parser error in %s around %d -- syntax error\n", fname, i);
-		} else if (data[i] == 'f') {
-			GLuint i1, i2, i3;
-			if (sscanf(&data[i+1], "%u %u %u", &i1, &i2, &i3) < 3) {
-				zerror("parser error in %s around %d -- expected indices\n", fname, i);
-				return false;
-			}
-			rm->indices[rm->num_inds++] = i1;
-			rm->indices[rm->num_inds++] = i2;
-			rm->indices[rm->num_inds++] = i3;
+					zerror("parser error in %s around %d -- syntax error\n", fname, j);
+			while (data[j] && data[j] != '\n') ++j;
 		}
-		while (data[i] && data[i] != '\n') ++i;
+		free(data);
+		succs[i] = true;
 	}
-	return true;
 }
 
-void
-render_update_view(const Camera &cam)
+static void
+free_raw_models(Raw_Model *rms, int num)
 {
-	g_matrices.view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
-	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
-	glBufferSubData(GL_UNIFORM_BUFFER, sizeof(glm::mat4), sizeof(glm::mat4), glm::value_ptr(g_matrices.view));
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
-}
-
-void
-render_update_projection(const Camera &cam, const Screen &scr)
-{
-	g_matrices.proj = glm::perspective(cam.fov, (float)scr.w / (float)scr.h, cam.near, cam.far);
-	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
-	glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(glm::mat4), glm::value_ptr(g_matrices.proj));
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+	for (int i = 0; i < num; ++i) {
+		free(rms[i].tex_fname);
+		free(rms[i].vertices);
+		free(rms[i].indices);
+		free(rms[i].tex_coords);
+		free(rms[i].normals);
+	}
 }
 
 #define GL_CHECK_ERR(obj, ivfn, objparam, infofn, fmt, ...)\
@@ -413,10 +287,10 @@ render_update_projection(const Camera &cam, const Screen &scr)
 }
 
 static GLuint
-mk_shader(const GLenum type, const std::string &src, const char *defines)
+mk_shader(const GLenum type, const char *src, const char *defines)
 {
 	const GLuint id = glCreateShader(type);
-	const char *src_strs[] = { "#version 330\n", defines, src.c_str() };
+	const char *src_strs[] = { "#version 330\n", defines, src };
 	glShaderSource(id, ARR_LEN(src_strs), src_strs, NULL);
 	glCompileShader(id);
 
@@ -434,7 +308,7 @@ mk_shader(const GLenum type, const std::string &src, const char *defines)
 }
 
 static GLuint
-mk_program(const std::string &vert_src, const std::string &frag_src, const char *defines)
+mk_program(const char *vert_src, const char *frag_src, const char *defines)
 {
 	GLuint vert_id = mk_shader(GL_VERTEX_SHADER, vert_src, defines);
 	GLuint frag_id = mk_shader(GL_FRAGMENT_SHADER, frag_src, defines);
@@ -455,8 +329,12 @@ mk_program(const std::string &vert_src, const std::string &frag_src, const char 
 }
 
 static SDL_Surface *
-flip_surface_x(SDL_Surface* s)
+load_surface(const char *fname)
 {
+	SDL_Surface *s;
+	if (!(s = IMG_Load(fname)))
+		zabort("IMG_Load failed! IMG_GetError: %s\n", IMG_GetError);
+	// opengl wants the origin at the bottom, so we flip it around the x axis
 	auto getpixel = [] (SDL_Surface *surface, int x, int y)
 	{
 		uint32_t *pixels = (uint32_t *)surface->pixels;
@@ -467,34 +345,18 @@ flip_surface_x(SDL_Surface* s)
 		uint32_t *pixels = (uint32_t *)surface->pixels;
 		pixels[(y * surface->w) + x] = pixel;
 	};
-
 	SDL_Surface* flip = SDL_CreateRGBSurface(0, s->w, s->h, s->format->BitsPerPixel, s->format->Rmask, s->format->Gmask, s->format->Bmask, s->format->Amask);
-	if (!flip) {
+	if (!flip)
 		zabort("SDL_CreateRGBSurface failed! SDL Error: %s\n", SDL_GetError());
-	}
 	for(int y = 0; y < s->h; ++y) {
 		for(int x = 0; x < s->w; ++x) {
-			//copy pixels, but reverse the y pixels
+			// reverse the y pixels
 			putpixel(flip, x, y, getpixel(s, x, s->h - y - 1));
 		}
 	}
-	return flip;
-};
-
-static SDL_Surface *
-load_surface(const char *fname)
-{
-	SDL_Surface *s;
-	if (!(s = IMG_Load(fname))) {
-		zabort("IMG_Load failed! IMG_GetError: %s\n", IMG_GetError);
-	}
-
-	// opengl wants the origin on the bottom, so we flip it on the x axis
-	SDL_Surface *flip = flip_surface_x(s);
 	SDL_FreeSurface(s);
 	return flip;
 }
-
 
 void
 render_init(const Camera &cam, const Screen &scr)
@@ -512,15 +374,17 @@ render_init(const Camera &cam, const Screen &scr)
 	glViewport(0, 0, scr.w, scr.h);
 
 	// init shaders
-	{ // TODO: fix this, make shaders load in batches, use char arrays
-		auto vert = load_file("shader.vert", "r");
+	{
+		char *vert = load_file("shader.vert", "r");
 		assert(vert);
-		auto frag = load_file("shader.frag", "r");
+		char *frag = load_file("shader.frag", "r");
 		assert(frag);
 
-		g_rgroups[tex_sh].shader = mk_program(vert.value(), frag.value(), "#define TEX\n");
-		g_rgroups[notex_sh].shader = mk_program(vert.value(), frag.value(), "#define NO_TEX\n");
-		g_rgroups[nolight_sh].shader = mk_program(vert.value(), frag.value(), "#define NO_LIGHT\n");
+		g_rgroups[tex_sh].shader = mk_program(vert, frag, "#define TEX\n");
+		g_rgroups[notex_sh].shader = mk_program(vert, frag, "#define NO_TEX\n");
+		g_rgroups[nolight_sh].shader = mk_program(vert, frag, "#define NO_LIGHT\n");
+		free(vert);
+		free(frag);
 	}
 
 	// load textures
@@ -603,60 +467,82 @@ render_init(const Camera &cam, const Screen &scr)
 		arr_init(&g_rgroups[notex_sh].models);
 		arr_init(&g_rgroups[nolight_sh].models);
 		hsh_init(&g_model_table, temp_str_hash);
+
 		const char *mnames[] = { "cube" };
 		constexpr int num_models = sizeof(mnames)/sizeof(mnames[0]);
-
 		Raw_Model rawms[num_models];
+		bool succs[num_models];
+		load_raw_models(mnames, rawms, succs, num_models);
+
 		GLuint vao_ids[num_models];
-		GLuint buf_ids[num_models*num_glbuffers];
+		GLuint buf_ids[num_models*num_glbufs];
 		glGenVertexArrays(num_models, vao_ids);
-		glGenBuffers(num_models*num_glbuffers, buf_ids);
+		glGenBuffers(num_models*num_glbufs, buf_ids);
 
 		for (int i = 0; i < num_models; ++i) {
-			bool succ = load_model(mnames[i], &rawms[i]);
-			if (!succ) {
+			if (!succs[i]) {
 				zerror("failed to load model %s", mnames[i]);
 				continue;
 			}
 			GLuint cur_vao = vao_ids[i];
-			GLuint *cur_bufs = &buf_ids[i*num_glbuffers];
+			GLuint *cur_bufs = &buf_ids[i*num_glbufs];
 			Raw_Model *rm = &rawms[i];
 			glBindVertexArray(cur_vao);
 			glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[vert_buf]);
 			glBufferData(GL_ARRAY_BUFFER, rm->num_verts*sizeof(GLfloat), rm->vertices, GL_STATIC_DRAW);
 			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 			glEnableVertexAttribArray(0);
-	
+
 			glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[norm_buf]);
 			glBufferData(GL_ARRAY_BUFFER, rm->num_norms*sizeof(GLfloat), rm->normals, GL_STATIC_DRAW);
 			glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 			glEnableVertexAttribArray(1);
 
-			if (rm->num_tcoords) {
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cur_bufs[ind_buf]);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm->num_inds*sizeof(GLuint), rm->indices, GL_STATIC_DRAW);
+
+			Model_Group *mg = NULL;
+			if (rm->tex_fname) {
 				glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[tex_buf]);
 				glBufferData(GL_ARRAY_BUFFER, rm->num_tcoords*sizeof(GLfloat), rm->tex_coords, GL_STATIC_DRAW);
 				glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 				glEnableVertexAttribArray(2);
-			}
-	
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cur_bufs[ind_buf]);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm->num_inds*sizeof(GLuint), rm->indices, GL_STATIC_DRAW);
-
-			Model_Group *finm = arr_alloc(&g_rgroups[tex_sh].models);
-			finm->vao = cur_vao;
-			finm->ibo = cur_bufs[ind_buf];
-			finm->num_indices = rm->num_inds;
-			int model_id = arr_getid(finm);
+				mg = arr_alloc(&g_rgroups[tex_sh].models);
+			} else
+				mg = arr_alloc(&g_rgroups[notex_sh].models);
+			mg->vao = cur_vao;
+			mg->ibo = cur_bufs[ind_buf];
+			mg->num_indices = rm->num_inds;
+			int model_id = arr_getid(mg);
 			int rgroup_id = tex_sh;
 			hsh_add(&g_model_table, mnames[i], {rgroup_id, model_id});
-			arr_init(&finm->instances);
+			arr_init(&mg->instances);
 		}
 		glBindVertexArray(0);
+		free_raw_models(rawms, num_models);
 	}
 }
 
+void
+render_update_view(const Camera &cam)
+{
+	g_matrices.view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
+	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
+	glBufferSubData(GL_UNIFORM_BUFFER, sizeof(glm::mat4), sizeof(glm::mat4), glm::value_ptr(g_matrices.view));
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+}
+
+void
+render_update_projection(const Camera &cam, const Screen &scr)
+{
+	g_matrices.proj = glm::perspective(cam.fov, (float)scr.w / (float)scr.h, cam.near, cam.far);
+	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
+	glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(glm::mat4), glm::value_ptr(g_matrices.proj));
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+}
+
 RenderID
-render_add(const char *name, const glm::vec3 &pos)
+render_add_instance(const char *name, const glm::vec3 &pos)
 {
 	ModelID mid = hsh_get(g_model_table, name);
 	Model_Group *mg = arr_get(g_rgroups[mid.rgroup_id].models, mid.mgroup_id);

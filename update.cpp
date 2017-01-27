@@ -23,7 +23,7 @@ update_init()
 			g_cubes[i].model.pos.x = 10.0f * i;
 			g_cubes[i].model.pos.y = 10.0f * i;
 			g_cubes[i].model.pos.z = 10.0f * i;
-			g_cubes[i].model.rid = render_add("cube", g_cubes[i].model.pos);
+			g_cubes[i].model.rid = render_add_instance("cube", g_cubes[i].model.pos);
 		}
 	}
 

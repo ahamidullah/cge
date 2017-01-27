@@ -5,55 +5,46 @@
 #include <SDL2/SDL.h>
 #include "zlib.h"
 
-constexpr unsigned int max_err_len = 1024;
-
 void
-error(const char *filename, int linenum, const char *funcname, bool abort, const char *err_fmt, ...)
+error(const char *filename, int linenum, const char *funcname, bool abort, const char *fmt, ...)
 {
 	va_list argptr;
-	char err_msg[max_err_len];
-	va_start(argptr, err_fmt);
-	vsprintf(err_msg, err_fmt, argptr);
+	char msg[1024]; // temp
+	va_start(argptr, fmt);
+	vsprintf(msg, fmt, argptr);
 	va_end(argptr);
-	fprintf(stderr, "Error: %s:%d in %s - %s\n", filename, linenum, funcname, err_msg);
+	fprintf(stderr, "Error: %s:%d in %s - %s\n", filename, linenum, funcname, msg);
 	if (abort)
 		exit(1);
 }
 
-std::optional<std::string>
+char *
 load_file(const char *fname, const char *mode)
 {
 	SDL_RWops *fp = SDL_RWFromFile(fname, mode);
 	if (!fp) {
-		zerror("error loading file %s!\n", fname);
-		return {};
+		zerror("could not load file %s!\n", fname);
+		return NULL;
 	}
-	Sint64 file_len = SDL_RWsize(fp);
-	if (file_len < 0) {
+	Sint64 len = SDL_RWsize(fp);
+	if (len < 0) {
 		zerror("could not get %s file length! SDL Error: %s\n", fname, SDL_GetError());
-		return {};
+		return NULL;
 	}
-	std::string buf;
-	buf.resize(file_len+1);
+	char *buf = (char *)malloc(len+1);
 	// SDL_RWread may return less bytes than requested, so we have to loop
-	Sint64 total_bytes_read = 0, cur_bytes_read = 0;
-	char *cur_buf_loc = &buf[0];
+	Sint64 tot_read = 0, cur_read = 0;
+	char *pos = &buf[0];
 	do {
-		cur_bytes_read = SDL_RWread(fp, cur_buf_loc, 1, (file_len - total_bytes_read));
-		total_bytes_read += cur_bytes_read;
-		cur_buf_loc += cur_bytes_read;
-	} while (total_bytes_read < file_len && cur_bytes_read != 0);
-
-	if (total_bytes_read != file_len) {
-		zerror("error read reading file %s!", fname);
-		return {};
+		cur_read = SDL_RWread(fp, pos, 1, (len - tot_read));
+		tot_read += cur_read;
+		pos += cur_read;
+	} while (tot_read < len && cur_read != 0);
+	if (tot_read != len) {
+		zerror("could not read file %s!", fname);
+		return NULL;
 	}
-	buf[file_len] = '\0';
+	buf[len] = '\0';
 	SDL_RWclose(fp);
 	return buf;
 }
-
-//std::optional<vec3f>
-//raycast_sphere(const glm::vec2 screen_ray, const glm::vec3 plane_normal, const float origin_ofs, const Camera &cam)
-//{
-//}
