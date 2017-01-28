@@ -182,9 +182,9 @@ process_input(Keyboard *kb, Mouse *m, const Screen &scr, const Camera &cam)
 int
 main()
 {
-	constexpr int TICKS_PER_SECOND =  25;
-	constexpr int SKIP_TICKS = 1000/TICKS_PER_SECOND;
-	constexpr int MAX_FRAMESKIP = 5;
+	constexpr unsigned TICKS_PER_SECOND =  25;
+	constexpr unsigned SKIP_TICKS = 1000/TICKS_PER_SECOND;
+	constexpr unsigned MAX_FRAMESKIP = 5;
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 	Keyboard kb = { {0}, {0} };
@@ -192,6 +192,7 @@ main()
 	Mouse mouse = { {400, 300}, {400, 300}, 0.1f, {false, false, false} };
 	Screen screen = { 800, 600 };
 	SDL_Window *window;
+	SDL_GLContext context;
 
 	// sdl init
 	{
@@ -212,16 +213,15 @@ main()
 		if (!(IMG_Init(imgflags) & imgflags)) {
 			zabort("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
 		}
-		if (!SDL_GL_CreateContext(window)) {
+		if (!(context = SDL_GL_CreateContext(window))) {
 			zabort("SDL could not create an OpenGL context! SDL Error: %s\n", SDL_GetError());
 		}
 	}
-
 	render_init(cam, screen);
 	update_init();
 
 	program_state state = run_state;
-	int num_updates = 0;
+	unsigned num_updates = 0;
 	unsigned next_tick = SDL_GetTicks();
 
 	while (state != exit_state) {
@@ -236,7 +236,7 @@ main()
 					next_tick += SKIP_TICKS;
 					++num_updates;
 				}
-				render(cam);
+				render();
 				SDL_GL_SwapWindow(window);
 				break;
 			}
@@ -248,9 +248,11 @@ main()
 			}
 		}
 	}
+	render_quit();
 	SDL_DestroyWindow(window);
-//	SDL_GL_DeleteContext(context);
+	SDL_GL_DeleteContext(context);
 	IMG_Quit();
 	SDL_Quit();
 	return 0;
 }
+

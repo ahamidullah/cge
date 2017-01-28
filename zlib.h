@@ -93,9 +93,9 @@ arr_first(const Array<T> &a)
 
 template <typename T>
 void
-arr_destroy(Array<T> *a)
+arr_destroy(const Array<T> &a)
 {
-	free(a->elems);
+	free(a.elems);
 }
 
 template <typename T>

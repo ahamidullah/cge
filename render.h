@@ -40,7 +40,8 @@ void render_init(const Camera &, const Screen &);
 void render_update_view(const Camera &);
 RenderID render_add_instance(const char *, const glm::vec3 &);
 void render_update_instance(RenderID, const glm::vec3 &);
-void render(const Camera &cam);
+void render();
+void render_quit();
 void mk_point_light(glm::vec3 pos);
 std::optional<glm::vec3> raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Screen &);
 

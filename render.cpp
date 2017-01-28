@@ -16,7 +16,7 @@ int
 temp_str_hash(const char *key)
 {
 	unsigned sum = 0;
-	for (int i = 0; i < strlen(key); ++i) {
+	for (unsigned i = 0; i < strlen(key); ++i) {
 		sum += key[i];
 	}
 	return sum % 100;
@@ -123,6 +123,7 @@ static Lights g_lights;
 static Matrices g_matrices;
 static Ubo_Ids g_ubos;
 static GLuint g_tex, g_spec_tex;
+constexpr int nm = 0;
 
 std::optional<glm::vec3>
 raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Screen &scr)
@@ -501,15 +502,14 @@ render_init(const Camera &cam, const Screen &scr)
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cur_bufs[ind_buf]);
 			glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm->num_inds*sizeof(GLuint), rm->indices, GL_STATIC_DRAW);
 
-			Model_Group *mg = NULL;
 			if (rm->tex_fname) {
 				glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[tex_buf]);
 				glBufferData(GL_ARRAY_BUFFER, rm->num_tcoords*sizeof(GLfloat), rm->tex_coords, GL_STATIC_DRAW);
 				glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 				glEnableVertexAttribArray(2);
-				mg = arr_alloc(&g_rgroups[tex_sh].models);
-			} else
-				mg = arr_alloc(&g_rgroups[notex_sh].models);
+			}
+			int shader = rm->tex_fname ? tex_sh : notex_sh;
+			Model_Group *mg = arr_alloc(&g_rgroups[shader].models);
 			mg->vao = cur_vao;
 			mg->ibo = cur_bufs[ind_buf];
 			mg->num_indices = rm->num_inds;
@@ -560,7 +560,7 @@ render_update_instance(RenderID rid, const glm::vec3 &pos)
 }
 
 void
-render(const Camera &cam)
+render()
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glm::mat4 model;
@@ -584,3 +584,21 @@ render(const Camera &cam)
 	glBindVertexArray(0);
 	glUseProgram(0);
 }
+
+void
+render_quit()
+{
+	// TODO: missing gldeletebuffers
+	glBindVertexArray(0);
+	glUseProgram(0);
+	glDeleteTextures(1, &g_tex);
+	for (int i = 0; i < num_shaders; ++i) {
+		glDeleteProgram(g_rgroups[i].shader);
+		for (Model_Group *m = arr_first(g_rgroups[i].models); m; m = arr_next(g_rgroups[i].models, m)) {
+			glDeleteVertexArrays(1, &m->vao);
+			arr_destroy(m->instances);
+		}
+		arr_destroy(g_rgroups[i].models);
+	}
+}
+
