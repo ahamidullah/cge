@@ -114,7 +114,8 @@ arr_next(const Array<T> &a, T *e)
 template <typename V, typename F>
 struct Hash_Table {
 	F hash_fn;
-	V data[100];
+	V data[100]; // temp
+	bool valid[100];
 };
 
 template<typename V, typename F>
@@ -122,20 +123,38 @@ void
 hsh_init(Hash_Table<V,F> *ht, F hash_fn)
 {
 	ht->hash_fn = hash_fn;
+	for (int i = 0; i < 100; ++i)
+		ht->valid[i] = false;
 }
 
 template <typename K, typename V, typename F>
 void
 hsh_add(Hash_Table<V,F> *ht, K key, V val)
 {
-	ht->data[ht->hash_fn(key)] = val;
+	int ind = ht->hash_fn(key);
+	ht->data[ind] = val;
+	ht->valid[ind] = true;
 }
 
 template <typename K, typename V, typename F>
-V
+void
+hsh_add_batch(Hash_Table<V,F> *ht, K *keys, V *vals, int n)
+{
+	for (int i = 0; i < n; ++i) {
+		int ind = ht->hash_fn(keys[i]);
+		ht->data[ind] = vals[i];
+		ht->valid[ind] = true;
+	}
+}
+
+template <typename K, typename V, typename F>
+std::optional<V>
 hsh_get(const Hash_Table<V,F> &ht, K key)
 {
-	return ht.data[ht.hash_fn(key)];
+	int i = ht.hash_fn(key);
+	if (!ht.valid[i])
+		return {};
+	return ht.data[i];
 }
 
 template<typename V, typename F>
@@ -151,5 +170,8 @@ void error(const char *, int, const char *, bool, const char *, ...);
 #define ARR_LEN(x) (sizeof(x)/sizeof(x[0]))
 
 char *load_file(const char *, const char *);
+int load_files(const char (*)[256], const char *, int, char **);
+void free_files(char **, unsigned);
+int get_fnames(const char *, char (*)[256]);
 
 #endif

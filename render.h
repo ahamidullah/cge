@@ -18,6 +18,9 @@ struct ModelID {
 	int mgroup_id;
 };
 
+const ModelID MODEL_ID_ERR = { 0, 0 };
+const RenderID RENDER_ID_ERR = { 0, 0, 0 };
+
 struct Camera {
 	float pitch;
 	float yaw;

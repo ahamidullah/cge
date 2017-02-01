@@ -17,9 +17,9 @@ Cube g_cubes[NUM_CUBES];
 void
 update_init()
 {
-	g_cubes[0].model.pos.x = 10.0f;
-	g_cubes[0].model.pos.y = 10.0f;
-	g_cubes[0].model.pos.z = 10.0f;
+	g_cubes[0].model.pos.x = 0.0f;
+	g_cubes[0].model.pos.y = 0.0f;
+	g_cubes[0].model.pos.z = 0.0f;
 	g_cubes[0].model.rid = render_add_instance("cube", g_cubes[0].model.pos);
 	g_cubes[1].model.pos.x = 10.0f;
 	g_cubes[1].model.pos.y = 0.0f;
@@ -36,6 +36,6 @@ update()
 {
 	for (int i = 0; i < NUM_CUBES; ++i) {
 		//g_cubes[i].model.pos.y += .05f;
-		render_update_instance(g_cubes[i].model.rid, g_cubes[i].model.pos);
+		//render_update_instance(g_cubes[i].model.rid, g_cubes[i].model.pos);
 	}
 }

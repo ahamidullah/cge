@@ -1,13 +1,15 @@
 #include <stdio.h>
 #include <GL/glew.h>
 #include <assert.h>
-#include <vector>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #define GLM_SWIZZLE
 #include <glm/gtc/type_ptr.hpp>
 #include <stdint.h>
 #include <stddef.h>
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
 #include "render.h"
 
 constexpr int MAX_PT_LIGHTS = 4;
@@ -22,22 +24,31 @@ temp_str_hash(const char *key)
 	return sum % 100;
 }
 
-struct Instance {
-	glm::vec3 pos;
-	glm::vec3 rot;
-	GLfloat scale;
-};
-
 struct Model_Group {
 	GLuint vao;
 	GLuint ibo;
 	GLuint num_indices;
-	Array<Instance> instances;
+/*	union {
+		struct {
+			GLuint diffuse_id;
+			GLuint spec_id;
+			float shininess;
+		} tex;
+		struct {
+			glm::vec3 ambient;
+			glm::vec3 diffuse;
+			glm::vec3 specular;
+			float shininess;
+		} notex;
+	} material;*/
+	GLuint diffuse_id;
+	Array<glm::mat4> instances;
 };
 
 struct Render_Group {
 	GLuint shader;
-	Array<Model_Group> models;
+	int num_models;
+	Model_Group models[100]; // temp
 };
 
 enum Shader_Enum {
@@ -117,12 +128,15 @@ struct Raw_Model {
 	size_t num_norms;
 };
 
-static Hash_Table<ModelID, int (*)(const char *)> g_model_table;
+typedef int (*String_Hash)(const char *);
+
+static Hash_Table<ModelID, String_Hash> g_model_table;
+static Hash_Table<GLuint, String_Hash> g_tex_table;
 static Render_Group g_rgroups[num_shaders];
 static Lights g_lights;
 static Matrices g_matrices;
 static Ubo_Ids g_ubos;
-static GLuint g_tex, g_spec_tex;
+//static GLuint g_tex, g_spec_tex;
 constexpr int nm = 0;
 
 std::optional<glm::vec3>
@@ -169,92 +183,82 @@ mk_point_light(glm::vec3 pos)
 
 // obj (sort of) loader
 static void
-load_raw_models(const char **names, Raw_Model *rms, bool *succs, int num)
+load_raw_models(char **mdatas, int n, char (*fnames)[256], Raw_Model *rms)
 {
-	const char *ext = ".ahh";
-	for (int i = 0; i < num; ++i) {
-		char fname[256]; // temp
-		strcpy(fname, names[i]);
-		strcat(fname, ext);
-		char *data = load_file(fname, "r");
-		if (!data) {
-			succs[i] = false;
-			continue;
-		}
+	for (int f = 0; f < n; ++f) {
 		size_t total_verts = 0;
 		size_t total_norms = 0;
 		size_t total_inds = 0;
 		size_t total_tcoords = 0;
-		for (int j = 0; data[j]; ++j) {
-			if (data[j] == 'v') {
-				if (data[j+1] == 't')
+		char *data = mdatas[f];
+		for (int b = 0; data[b]; ++b) {
+			if (data[b] == 'v') {
+				if (data[b+1] == 't')
 					total_tcoords += 2;
-				else if (data[j+1] == 'n')
+				else if (data[b+1] == 'n')
 					total_norms += 3;
-				else if (data[j+1] == ' ')
+				else if (data[b+1] == ' ')
 					total_verts += 3;
-			} else if (data[j] == 'f') {
+			} else if (data[b] == 'f') {
 				total_inds += 3;
 			}
-			while (data[j] && data[j] != '\n') ++j;
+			while (data[b] && data[b] != '\n') ++b;
 		}
 	
-		rms[i].vertices = (GLfloat *)malloc(sizeof(GLfloat)*(total_verts));
-		rms[i].num_verts = 0;
-		rms[i].normals = (GLfloat *)malloc(sizeof(GLfloat)*(total_norms));
-		rms[i].num_norms = 0;
-		rms[i].indices = (GLuint *)malloc(sizeof(GLuint)*(total_inds));
-		rms[i].num_inds = 0;
-		rms[i].tex_coords = (GLfloat *)malloc(sizeof(GLfloat)*(total_tcoords));
-		rms[i].num_tcoords = 0;
-		rms[i].tex_fname = NULL;
-	
-		for (int j = 0; data[j]; ++j) {
-			if (data[j] == 't' && data[j+1] == 'f') {
-				rms[i].tex_fname = (char *)malloc(256); // temp
+		rms[f].vertices = (GLfloat *)malloc(sizeof(GLfloat)*(total_verts));
+		rms[f].num_verts = 0;
+		rms[f].normals = (GLfloat *)malloc(sizeof(GLfloat)*(total_norms));
+		rms[f].num_norms = 0;
+		rms[f].indices = (GLuint *)malloc(sizeof(GLuint)*(total_inds));
+		rms[f].num_inds = 0;
+		rms[f].tex_coords = (GLfloat *)malloc(sizeof(GLfloat)*(total_tcoords));
+		rms[f].num_tcoords = 0;
+		rms[f].tex_fname = NULL;
+
+		for (int b = 0; data[b]; ++b) {
+			if (data[b] == 't' && data[b+1] == 'f') {
+				rms[f].tex_fname = (char *)malloc(256); // temp
 				// doesn't work if texture filename has spaces...
-				if (sscanf(&data[j], "tf %s", rms[i].tex_fname) < 1)
-					zerror("obj error: could not parse texture file name in file %s\n", fname);
-			} else if (data[j] == 'v') {
-				if (data[j+1] == 't') {
+				if (sscanf(&data[b], "tf %s", rms[f].tex_fname) < 1)
+					zerror("could not parse texture file name in model %s\n", fnames[f]);
+			} else if (data[b] == 'v') {
+				if (data[b+1] == 't') {
 					GLfloat t1, t2;
-					if (sscanf(&data[j+2], "%f %f", &t1, &t2) == 2) {
-						rms[i].tex_coords[rms[i].num_tcoords++] = t1;
-						rms[i].tex_coords[rms[i].num_tcoords++] = t2;
+					if (sscanf(&data[b+2], "%f %f", &t1, &t2) == 2) {
+						rms[f].tex_coords[rms[f].num_tcoords++] = t1;
+						rms[f].tex_coords[rms[f].num_tcoords++] = t2;
 					} else
-						zerror("parser error in %s around %d -- expected tex coords\n", fname, j);
-				} else if (data[j+1] == 'n') {
+						zerror("in %s around %d -- expected tex coords\n", fnames[f], b);
+				} else if (data[b+1] == 'n') {
 					GLfloat n1, n2, n3;
-					if (sscanf(&data[j+2], "%f %f %f", &n1, &n2, &n3) == 3) {
-						rms[i].normals[rms[i].num_norms++] = n1;
-						rms[i].normals[rms[i].num_norms++] = n2;
-						rms[i].normals[rms[i].num_norms++] = n3;
+					if (sscanf(&data[b+2], "%f %f %f", &n1, &n2, &n3) == 3) {
+						rms[f].normals[rms[f].num_norms++] = n1;
+						rms[f].normals[rms[f].num_norms++] = n2;
+						rms[f].normals[rms[f].num_norms++] = n3;
 					} else
-						zerror("parser error in %s around %d -- expected normals\n", fname, j);
-				} else if (data[j+1] == ' ') {
+						zerror("in %s around %d -- expected normals\n", fnames[f], b);
+				} else if (data[b+1] == ' ') {
 					GLfloat v1, v2, v3;
-					if (sscanf(&data[j+2], "%f %f %f", &v1, &v2, &v3) == 3) {
-						rms[i].vertices[rms[i].num_verts++] = v1;
-						rms[i].vertices[rms[i].num_verts++] = v2;
-						rms[i].vertices[rms[i].num_verts++] = v3;
+					if (sscanf(&data[b+2], "%f %f %f", &v1, &v2, &v3) == 3) {
+						rms[f].vertices[rms[f].num_verts++] = v1;
+						rms[f].vertices[rms[f].num_verts++] = v2;
+						rms[f].vertices[rms[f].num_verts++] = v3;
 					} else
-						zerror("parser error in %s around %d -- expected vertices\n", fname, j);
+						zerror("in %s around %d -- expected vertices\n", fnames[f], b);
 				} else
-					zerror("parser error in %s around %d -- syntax error\n", fname, j);
-			} else if (data[j] == 'f') {
+					zerror("parser error in %s around %d -- syntax error\n", fnames[f], b);
+			} else if (data[b] == 'f') {
 				GLuint i1, i2, i3;
-				if (sscanf(&data[j+1], "%u %u %u", &i1, &i2, &i3) == 3) {
-					rms[i].indices[rms[i].num_inds++] = i1;
-					rms[i].indices[rms[i].num_inds++] = i2;
-					rms[i].indices[rms[i].num_inds++] = i3;
+				if (sscanf(&data[b+1], "%u %u %u", &i1, &i2, &i3) == 3) {
+					rms[f].indices[rms[f].num_inds++] = i1;
+					rms[f].indices[rms[f].num_inds++] = i2;
+					rms[f].indices[rms[f].num_inds++] = i3;
 				} else
-					zerror("parser error in %s around %d -- expected indices\n", fname, j);
+					zerror("parser error in %s around %d -- expected indices\n", fnames[f], b);
 			} else
-					zerror("parser error in %s around %d -- syntax error\n", fname, j);
-			while (data[j] && data[j] != '\n') ++j;
+					zerror("parser error in %s around %d -- syntax error\n", fnames[f], b);
+			while (data[b] && data[b] != '\n') ++b;
 		}
-		free(data);
-		succs[i] = true;
 	}
 }
 
@@ -329,34 +333,72 @@ mk_program(const char *vert_src, const char *frag_src, const char *defines)
 	return program;
 }
 
-static SDL_Surface *
-load_surface(const char *fname)
+/*
+static int
+load_surfaces(char (*fnames)[256], int n, SDL_Surface **ret)
 {
-	SDL_Surface *s;
-	if (!(s = IMG_Load(fname)))
-		zabort("IMG_Load failed! IMG_GetError: %s\n", IMG_GetError);
-	// opengl wants the origin at the bottom, so we flip it around the x axis
 	auto getpixel = [] (SDL_Surface *surface, int x, int y)
 	{
-		uint32_t *pixels = (uint32_t *)surface->pixels;
-		return pixels[(y * surface->w) + x];
+		return ((uint32_t *)surface->pixels)[(y * surface->w) + x];
 	};
 	auto putpixel = [] (SDL_Surface *surface, int x, int y, uint32_t pixel)
 	{
-		uint32_t *pixels = (uint32_t *)surface->pixels;
-		pixels[(y * surface->w) + x] = pixel;
+		((uint32_t *)surface->pixels)[(y * surface->w) + x] = pixel;
 	};
-	SDL_Surface* flip = SDL_CreateRGBSurface(0, s->w, s->h, s->format->BitsPerPixel, s->format->Rmask, s->format->Gmask, s->format->Bmask, s->format->Amask);
-	if (!flip)
-		zabort("SDL_CreateRGBSurface failed! SDL Error: %s\n", SDL_GetError());
-	for(int y = 0; y < s->h; ++y) {
-		for(int x = 0; x < s->w; ++x) {
-			// reverse the y pixels
-			putpixel(flip, x, y, getpixel(s, x, s->h - y - 1));
+	SDL_Surface *origs[n];
+	int succs = 0;
+	for (int i = 0; i < n; ++i) {
+		if (!(origs[i] = IMG_Load(fnames[i]))) {
+			zabort("IMG_Load failed. IMG_GetError: %s\n", IMG_GetError());
+			continue;
 		}
+		// opengl wants the origin at the bottom, so we flip it around the x axis
+		ret[i] = SDL_CreateRGBSurface(0, origs[i]->w, origs[i]->h, origs[i]->format->BitsPerPixel, origs[i]->format->Rmask, origs[i]->format->Gmask, origs[i]->format->Bmask, origs[i]->format->Amask);
+		if (!ret[i]) {
+			zabort("SDL_CreateRGBSurface failed! SDL Error: %s\n", SDL_GetError());
+			continue;
+		}
+		for(int y = 0; y < origs[i]->h; ++y) {
+			for(int x = 0; x < origs[i]->w; ++x) {
+				// reverse the y pixels
+				putpixel(ret[i], x, y, getpixel(origs[i], x, origs[i]->h - y - 1));
+			}
+		}
+		printf("Loaded image %s\n", fnames[i]);
+		SDL_FreeSurface(origs[i]);
+		++succs;
 	}
-	SDL_FreeSurface(s);
-	return flip;
+	return succs;
+}
+
+static void
+free_surfaces(SDL_Surface **surfs, int n)
+{
+	for (int i = 0; i < n; ++i) {
+		SDL_FreeSurface(surfs[i]);
+	}
+}
+
+*/
+/*
+	auto get_pixel = [] (SDL_Surface *surface, int x, int y)
+	{
+		return ((uint32_t *)surface->pixels)[(y * surface->w) + x];
+	};
+	auto put_pixel = [] (SDL_Surface *surface, int x, int y, uint32_t pixel)
+	{
+		((uint32_t *)surface->pixels)[(y * surface->w) + x] = pixel;
+	};
+*/
+
+#define GET_PIXEL(s, x, y) (((uint32_t *)s->pixels)[(y * s->w) + x])
+#define PUT_PIXEL(s, x, y, p) (((uint32_t *)s->pixels)[(y * s->w) + x] = p)
+void
+swap_pixels (SDL_Surface *s, int x1, int y1, int x2, int y2)
+{
+	uint32_t temp=GET_PIXEL(s, x1, y1);
+	PUT_PIXEL(s, x1, y1, GET_PIXEL(s, x2, y2));
+	PUT_PIXEL(s, x2, y2, temp);
 }
 
 void
@@ -376,9 +418,9 @@ render_init(const Camera &cam, const Screen &scr)
 
 	// init shaders
 	{
-		char *vert = load_file("shader.vert", "r");
+		char *vert = load_file("shaders/shader.vert", "r");
 		assert(vert);
-		char *frag = load_file("shader.frag", "r");
+		char *frag = load_file("shaders/shader.frag", "r");
 		assert(frag);
 
 		g_rgroups[tex_sh].shader = mk_program(vert, frag, "#define TEX\n");
@@ -390,17 +432,20 @@ render_init(const Camera &cam, const Screen &scr)
 
 	// load textures
 	{
-	  	SDL_Surface *s = load_surface("cube.png");
+/*		SDL_Surface *s[1];
+		const char *fnames[1] = { "cube.png" };
+	  	load_surfaces(fnames, 1, s);
 	  	glGenTextures(1, &g_tex);
+		glActiveTexture(GL_TEXTURE0);
 	  	glBindTexture(GL_TEXTURE_2D, g_tex);
 	  	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	  	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	  	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	  	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	  	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, s->w, s->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, s->pixels);
+	  	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, s[0]->w, s[0]->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, s[0]->pixels);
 	  	glGenerateMipmap(GL_TEXTURE_2D);
-	  	SDL_FreeSurface(s);
-	  	glBindTexture(GL_TEXTURE_2D, 0);
+	  	SDL_FreeSurface(s[0]);
+	  	glBindTexture(GL_TEXTURE_2D, 0);*/
 	}
 
 	auto set_bind_pt = [](const GLuint program, const char *name, const GLuint bind_pt) {
@@ -462,32 +507,70 @@ render_init(const Camera &cam, const Screen &scr)
 		glUseProgram(0);
 	}
 
+	// load textures
+	{
+		hsh_init(&g_tex_table, temp_str_hash);
+		char fnames[256][256]; // temp
+		int num_fnames = get_fnames("assets/textures/", fnames);
+		SDL_Surface *texs[256]; // temp
+		char *succ_load_fnames[256]; // temp
+		int num_texs = 0;
+		for (int i = 0; i < num_fnames; ++i) {
+			if (!(texs[num_texs] = IMG_Load(fnames[i]))) {
+				zabort("IMG_Load failed! IMG_GetError: %s\n", IMG_GetError);
+				continue; // reuse the sdl_surface
+			}
+			succ_load_fnames[num_texs] = fnames[i];
+			printf("Loaded texture file %s\n", fnames[i]);
+			++num_texs;
+		}
+		// opengl wants the origin at the bottom, so we flip it around the x axis
+		for (int i = 0; i < num_texs; ++i) {
+			for(int y = 0; y < texs[i]->h; ++y)
+				for(int x = 0; x < texs[i]->w; ++x)
+					swap_pixels(texs[i], x, y, x, texs[i]->h - y - 1);
+		}
+		GLuint tex_ids[256]; // temp
+		glGenTextures(num_texs, tex_ids);
+		glActiveTexture(GL_TEXTURE0);
+		for (int i = 0; i < num_texs; ++i) {
+	  		glBindTexture(GL_TEXTURE_2D, tex_ids[i]);
+	  		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	  		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	  		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	  		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	  		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texs[i]->w, texs[i]->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, texs[i]->pixels);
+	  		glGenerateMipmap(GL_TEXTURE_2D);
+		}
+		hsh_add_batch(&g_tex_table, succ_load_fnames, tex_ids, num_texs);
+	  	glBindTexture(GL_TEXTURE_2D, 0);
+		for (int i = 0; i < num_texs; ++i)
+			SDL_FreeSurface(texs[i]);
+	}
+
 	// load models
 	{
-		arr_init(&g_rgroups[tex_sh].models);
-		arr_init(&g_rgroups[notex_sh].models);
-		arr_init(&g_rgroups[nolight_sh].models);
 		hsh_init(&g_model_table, temp_str_hash);
 
-		const char *mnames[] = { "cube" };
-		constexpr int num_models = sizeof(mnames)/sizeof(mnames[0]);
-		Raw_Model rawms[num_models];
-		bool succs[num_models];
-		load_raw_models(mnames, rawms, succs, num_models);
+		char fnames[256][256]; // temp
+		int num_fnames = get_fnames("assets/models/", fnames);
+		Raw_Model rawms[256]; // temp
+		char *mdatas[256]; // temp
+		int num_models = load_files(fnames, "r", num_fnames, mdatas);
+		load_raw_models(mdatas, num_models, fnames, rawms);
 
+		// TEMP
 		GLuint vao_ids[num_models];
 		GLuint buf_ids[num_models*num_glbufs];
+
 		glGenVertexArrays(num_models, vao_ids);
 		glGenBuffers(num_models*num_glbufs, buf_ids);
 
 		for (int i = 0; i < num_models; ++i) {
-			if (!succs[i]) {
-				zerror("failed to load model %s", mnames[i]);
-				continue;
-			}
 			GLuint cur_vao = vao_ids[i];
 			GLuint *cur_bufs = &buf_ids[i*num_glbufs];
 			Raw_Model *rm = &rawms[i];
+
 			glBindVertexArray(cur_vao);
 			glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[vert_buf]);
 			glBufferData(GL_ARRAY_BUFFER, rm->num_verts*sizeof(GLfloat), rm->vertices, GL_STATIC_DRAW);
@@ -508,16 +591,28 @@ render_init(const Camera &cam, const Screen &scr)
 				glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 				glEnableVertexAttribArray(2);
 			}
+			printf("Loaded model file %s\n", fnames[i]);
 			int shader = rm->tex_fname ? tex_sh : notex_sh;
-			Model_Group *mg = arr_alloc(&g_rgroups[shader].models);
+			int model_ind = g_rgroups[shader].num_models++;
+			Model_Group *mg = &g_rgroups[shader].models[model_ind];
 			mg->vao = cur_vao;
 			mg->ibo = cur_bufs[ind_buf];
 			mg->num_indices = rm->num_inds;
-			int model_id = arr_getid(mg);
-			int rgroup_id = tex_sh;
-			hsh_add(&g_model_table, mnames[i], {rgroup_id, model_id});
+			// get base model name without path and extension
+			char *base_mname = fnames[i];
+			printf("base name %s\n", base_mname);
+			while (*base_mname != '\0' && *base_mname != '.')
+				++base_mname;
+			*base_mname = '\0';
+			printf("base name %s\n", base_mname);
+			while (*(base_mname-1) != '/')
+				--base_mname;
+			printf("base name %s\n", base_mname);
+			hsh_add(&g_model_table, base_mname, {shader, model_ind});
+			mg->diffuse_id = *(hsh_get(g_tex_table, rm->tex_fname));
 			arr_init(&mg->instances);
 		}
+
 		glBindVertexArray(0);
 		free_raw_models(rawms, num_models);
 	}
@@ -544,54 +639,62 @@ render_update_projection(const Camera &cam, const Screen &scr)
 RenderID
 render_add_instance(const char *name, const glm::vec3 &pos)
 {
-	ModelID mid = hsh_get(g_model_table, name);
-	Model_Group *mg = arr_get(g_rgroups[mid.rgroup_id].models, mid.mgroup_id);
-	Instance *in = arr_alloc(&mg->instances);
-	in->pos = pos;
-	return { mid.rgroup_id, mid.mgroup_id, arr_getid(in) };
+	std::optional<ModelID> mid = hsh_get(g_model_table, name);
+	if (!mid) { // DEBUG
+		zerror("tried to add instance of invalid model '%s'", name);
+		return RENDER_ID_ERR;
+	}
+	Model_Group *mg = &g_rgroups[mid->rgroup_id].models[mid->mgroup_id];
+	glm::mat4 *in = arr_alloc(&mg->instances);
+	*in = glm::mat4();
+	*in = glm::translate(*in, pos);
+	return { mid->rgroup_id, mid->mgroup_id, arr_getid(in) };
+}
+
+static bool
+rid_equals(RenderID id1, RenderID id2) {
+	return (id1.rgroup_id == id2.rgroup_id && id1.mgroup_id == id2.mgroup_id && id1.instance_id == id2.instance_id);
 }
 
 void
 render_update_instance(RenderID rid, const glm::vec3 &pos)
 {
-	Model_Group *mg = arr_get(g_rgroups[rid.rgroup_id].models, rid.mgroup_id);
-	Instance *in = arr_get(mg->instances, rid.instance_id);
-	in->pos = pos;
+	if (rid_equals(rid, RENDER_ID_ERR))
+		return;
+	Model_Group *mg = &g_rgroups[rid.rgroup_id].models[rid.mgroup_id];
+	glm::mat4 *in = arr_get(mg->instances, rid.instance_id);
+	*in = glm::translate(*in, pos);
 }
 
 void
 render()
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	glm::mat4 model;
-	for (int i = 0; i < num_shaders; ++i) {
+/*	for (int i = 0; i < num_shaders; ++i) {
 		glUseProgram(g_rgroups[i].shader);
 		GLint model_loc = glGetUniformLocation(g_rgroups[i].shader, "u_model");
 		for (Model_Group *m = arr_first(g_rgroups[i].models); m; m = arr_next(g_rgroups[i].models, m)) {
-			glActiveTexture(GL_TEXTURE0);
+//			glActiveTexture(GL_TEXTURE0);
 			glBindTexture(GL_TEXTURE_2D, g_tex);
 			glBindVertexArray(m->vao);
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m->ibo);
-			for (Instance *in = arr_first(m->instances); in; in = arr_next(m->instances, in)) {
-				model = glm::translate(model, in->pos);
-//				model = glm::scale(model, in->scale);
-//				model = glm::rotate(model, 50.0f, glm::vec3(0, 1, 1));
-				glUniformMatrix4fv(model_loc, 1, GL_FALSE, glm::value_ptr(model));
+			for (glm::mat4 *in = arr_first(m->instances); in; in = arr_next(m->instances, in)) {
+				glUniformMatrix4fv(model_loc, 1, GL_FALSE, glm::value_ptr(*in));
 				glDrawElements(GL_TRIANGLES, m->num_indices, GL_UNSIGNED_INT, 0);
 			}
 		}
 	}
 	glBindVertexArray(0);
-	glUseProgram(0);
+	glUseProgram(0);*/
 }
 
 void
 render_quit()
 {
 	// TODO: missing gldeletebuffers
-	glBindVertexArray(0);
+/*	glBindVertexArray(0);
 	glUseProgram(0);
-	glDeleteTextures(1, &g_tex);
+//	glDeleteTextures(1, &g_tex);
 	for (int i = 0; i < num_shaders; ++i) {
 		glDeleteProgram(g_rgroups[i].shader);
 		for (Model_Group *m = arr_first(g_rgroups[i].models); m; m = arr_next(g_rgroups[i].models, m)) {
@@ -599,6 +702,6 @@ render_quit()
 			arr_destroy(m->instances);
 		}
 		arr_destroy(g_rgroups[i].models);
-	}
+	}*/
 }
 
