@@ -7,6 +7,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <stdint.h>
 #include <stddef.h>
+#include <vector>
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
@@ -24,31 +25,41 @@ temp_str_hash(const char *key)
 	return sum % 100;
 }
 
-struct Model_Group {
-	GLuint vao;
-	GLuint ibo;
-	GLuint num_indices;
-/*	union {
-		struct {
-			GLuint diffuse_id;
-			GLuint spec_id;
-			float shininess;
-		} tex;
-		struct {
-			glm::vec3 ambient;
-			glm::vec3 diffuse;
-			glm::vec3 specular;
-			float shininess;
-		} notex;
-	} material;*/
+struct Tex_Mat {
 	GLuint diffuse_id;
+	GLuint spec_id;
+	float shininess;
+};
+/*
+struct Notex_Mat {
+	glm::vec3 ambient;
+	glm::vec3 diffuse;
+	glm::vec3 specular;
+	float shininess;
+};
+*/
+
+union Material {
+	Tex_Mat tex;
+};
+
+struct Mesh_Info {
+	GLuint num_indices;
+	Material mat;
+};
+
+struct Model {
+	GLuint vao;
+	GLuint ebo;
+	int num_meshes;
+	Mesh_Info meshes[256]; // temp
 	Array<glm::mat4> instances;
 };
 
 struct Render_Group {
 	GLuint shader;
 	int num_models;
-	Model_Group models[100]; // temp
+	Model models[256]; // temp
 };
 
 enum Shader_Enum {
@@ -116,16 +127,17 @@ enum GL_Buffers {
 	num_glbufs
 };
 
+struct Raw_Mesh_Info {
+	GLuint num_indices;
+	char diffuse_fname[256]; //temp
+};
+
 struct Raw_Model {
-	char *tex_fname;
-	GLfloat *vertices;
-	GLfloat *tex_coords;
-	GLfloat *normals;
-	GLuint *indices;
-	size_t num_inds;
-	size_t num_verts;
-	size_t num_tcoords;
-	size_t num_norms;
+	std::vector<Raw_Mesh_Info> raw_mesh_infos;
+	std::vector<GLfloat> positions;
+	std::vector<GLfloat> uvs;
+	std::vector<GLfloat> normals;
+	std::vector<GLuint> indices;
 };
 
 typedef int (*String_Hash)(const char *);
@@ -181,97 +193,49 @@ mk_point_light(glm::vec3 pos)
 	zerror("Max point lights reached!");
 }
 
-// obj (sort of) loader
 static void
-load_raw_models(char **mdatas, int n, char (*fnames)[256], Raw_Model *rms)
+process_node(aiNode* node, const aiScene* scene, Raw_Model *rm)
 {
-	for (int f = 0; f < n; ++f) {
-		size_t total_verts = 0;
-		size_t total_norms = 0;
-		size_t total_inds = 0;
-		size_t total_tcoords = 0;
-		char *data = mdatas[f];
-		for (int b = 0; data[b]; ++b) {
-			if (data[b] == 'v') {
-				if (data[b+1] == 't')
-					total_tcoords += 2;
-				else if (data[b+1] == 'n')
-					total_norms += 3;
-				else if (data[b+1] == ' ')
-					total_verts += 3;
-			} else if (data[b] == 'f') {
-				total_inds += 3;
+	for (int m = 0; m < node->mNumMeshes; ++m) {
+		aiMesh* mesh = scene->mMeshes[node->mMeshes[m]];
+		for (int i = 0; i < mesh->mNumVertices; ++i) {
+			rm->positions.push_back(mesh->mVertices[i].x);
+			rm->positions.push_back(mesh->mVertices[i].y);
+			rm->positions.push_back(mesh->mVertices[i].z);
+		}
+		for (int i = 0; i < mesh->mNumVertices; ++i) {
+			rm->normals.push_back(mesh->mNormals[i].x);
+			rm->normals.push_back(mesh->mNormals[i].y);
+			rm->normals.push_back(mesh->mNormals[i].z);
+		}
+		int num_mesh_inds = 0;
+		for (int i = 0; i < mesh->mNumFaces; ++i) {
+			aiFace face = mesh->mFaces[i];
+			for(GLuint j = 0; j < face.mNumIndices; j++) {
+				rm->indices.push_back(face.mIndices[j]);
+				++num_mesh_inds;
 			}
-			while (data[b] && data[b] != '\n') ++b;
 		}
-	
-		rms[f].vertices = (GLfloat *)malloc(sizeof(GLfloat)*(total_verts));
-		rms[f].num_verts = 0;
-		rms[f].normals = (GLfloat *)malloc(sizeof(GLfloat)*(total_norms));
-		rms[f].num_norms = 0;
-		rms[f].indices = (GLuint *)malloc(sizeof(GLuint)*(total_inds));
-		rms[f].num_inds = 0;
-		rms[f].tex_coords = (GLfloat *)malloc(sizeof(GLfloat)*(total_tcoords));
-		rms[f].num_tcoords = 0;
-		rms[f].tex_fname = NULL;
-
-		for (int b = 0; data[b]; ++b) {
-			if (data[b] == 't' && data[b+1] == 'f') {
-				rms[f].tex_fname = (char *)malloc(256); // temp
-				// doesn't work if texture filename has spaces...
-				if (sscanf(&data[b], "tf %s", rms[f].tex_fname) < 1)
-					zerror("could not parse texture file name in model %s\n", fnames[f]);
-			} else if (data[b] == 'v') {
-				if (data[b+1] == 't') {
-					GLfloat t1, t2;
-					if (sscanf(&data[b+2], "%f %f", &t1, &t2) == 2) {
-						rms[f].tex_coords[rms[f].num_tcoords++] = t1;
-						rms[f].tex_coords[rms[f].num_tcoords++] = t2;
-					} else
-						zerror("in %s around %d -- expected tex coords\n", fnames[f], b);
-				} else if (data[b+1] == 'n') {
-					GLfloat n1, n2, n3;
-					if (sscanf(&data[b+2], "%f %f %f", &n1, &n2, &n3) == 3) {
-						rms[f].normals[rms[f].num_norms++] = n1;
-						rms[f].normals[rms[f].num_norms++] = n2;
-						rms[f].normals[rms[f].num_norms++] = n3;
-					} else
-						zerror("in %s around %d -- expected normals\n", fnames[f], b);
-				} else if (data[b+1] == ' ') {
-					GLfloat v1, v2, v3;
-					if (sscanf(&data[b+2], "%f %f %f", &v1, &v2, &v3) == 3) {
-						rms[f].vertices[rms[f].num_verts++] = v1;
-						rms[f].vertices[rms[f].num_verts++] = v2;
-						rms[f].vertices[rms[f].num_verts++] = v3;
-					} else
-						zerror("in %s around %d -- expected vertices\n", fnames[f], b);
-				} else
-					zerror("parser error in %s around %d -- syntax error\n", fnames[f], b);
-			} else if (data[b] == 'f') {
-				GLuint i1, i2, i3;
-				if (sscanf(&data[b+1], "%u %u %u", &i1, &i2, &i3) == 3) {
-					rms[f].indices[rms[f].num_inds++] = i1;
-					rms[f].indices[rms[f].num_inds++] = i2;
-					rms[f].indices[rms[f].num_inds++] = i3;
-				} else
-					zerror("parser error in %s around %d -- expected indices\n", fnames[f], b);
-			} else
-					zerror("parser error in %s around %d -- syntax error\n", fnames[f], b);
-			while (data[b] && data[b] != '\n') ++b;
+		if (mesh->mTextureCoords[0]) {
+			for(int i = 0; i < mesh->mNumVertices; ++i) {
+				rm->uvs.push_back(mesh->mTextureCoords[0][i].x);
+				rm->uvs.push_back(mesh->mTextureCoords[0][i].y);
+			}
+		}
+		if (mesh->mMaterialIndex >= 0) {
+			aiMaterial* mat = scene->mMaterials[mesh->mMaterialIndex];
+			aiString str;
+			mat->GetTexture(aiTextureType_DIFFUSE, 0, &str);
+			rm->raw_mesh_infos.resize(rm->raw_mesh_infos.size()+1); // vector garbage
+			rm->raw_mesh_infos.back().num_indices = num_mesh_inds;
+			strcpy(rm->raw_mesh_infos.back().diffuse_fname, str.C_Str());
+//			for (int i = 0; i < mat->GetTextureCount(aiTextureType_DIFFUSE); i++) {
+//				aiString str;
+//			}
 		}
 	}
-}
-
-static void
-free_raw_models(Raw_Model *rms, int num)
-{
-	for (int i = 0; i < num; ++i) {
-		free(rms[i].tex_fname);
-		free(rms[i].vertices);
-		free(rms[i].indices);
-		free(rms[i].tex_coords);
-		free(rms[i].normals);
-	}
+	for(int i = 0; i < node->mNumChildren; ++i)
+		process_node(node->mChildren[i], scene, rm);
 }
 
 #define GL_CHECK_ERR(obj, ivfn, objparam, infofn, fmt, ...)\
@@ -497,52 +461,53 @@ render_init(const Camera &cam, const Screen &scr)
 
 	// init material uniform
 	{
-		glUseProgram(g_rgroups[tex_sh].shader);
-		glUniform3f(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.ambient"),  1.0f, 0.5f, 0.31f);
+//		glUseProgram(g_rgroups[tex_sh].shader);
+//		glUniform3f(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.ambient"),  1.0f, 0.5f, 0.31f);
 		//glUniform3f(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.diffuse"),  1.0f, 0.5f, 0.31f);
-		//glUniform3f(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.specular"), 0.5f, 0.5f, 0.5f);
+		glUniform3f(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.specular"), 0.5f, 0.5f, 0.5f);
 		glUniform1i(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.diffuse"), 0);
 		//glUniform1i(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.specular"), 1);
 		glUniform1f(glGetUniformLocation(g_rgroups[tex_sh].shader, "mat.shininess"), 64.0f);
-		glUseProgram(0);
+//		glUseProgram(0);
 	}
 
 	// load textures
 	{
 		hsh_init(&g_tex_table, temp_str_hash);
-		char fnames[256][256]; // temp
-		int num_fnames = get_fnames("assets/textures/", fnames);
+		char paths[256][256]; // temp
+		int num_files = get_paths("textures/", paths);
 		SDL_Surface *texs[256]; // temp
-		char *succ_load_fnames[256]; // temp
+		char *succ_load_paths[256]; // temp
 		int num_texs = 0;
-		for (int i = 0; i < num_fnames; ++i) {
-			if (!(texs[num_texs] = IMG_Load(fnames[i]))) {
+		for (int i = 0; i < num_files; ++i) {
+			if (!(texs[num_texs] = IMG_Load(paths[i]))) {
 				zabort("IMG_Load failed! IMG_GetError: %s\n", IMG_GetError);
 				continue; // reuse the sdl_surface
 			}
-			succ_load_fnames[num_texs] = fnames[i];
-			printf("Loaded texture file %s\n", fnames[i]);
+			succ_load_paths[num_texs] = paths[i];
+			printf("Loaded texture file %s\n", paths[i]);
 			++num_texs;
 		}
 		// opengl wants the origin at the bottom, so we flip it around the x axis
-		for (int i = 0; i < num_texs; ++i) {
-			for(int y = 0; y < texs[i]->h; ++y)
-				for(int x = 0; x < texs[i]->w; ++x)
-					swap_pixels(texs[i], x, y, x, texs[i]->h - y - 1);
-		}
+//		for (int i = 0; i < num_texs; ++i) {
+//			for(int y = 0; y < texs[i]->h; ++y)
+//				for(int x = 0; x < texs[i]->w; ++x)
+//					swap_pixels(texs[i], x, y, x, texs[i]->h - y - 1);
+//		}
 		GLuint tex_ids[256]; // temp
 		glGenTextures(num_texs, tex_ids);
 		glActiveTexture(GL_TEXTURE0);
 		for (int i = 0; i < num_texs; ++i) {
+			GLint format = texs[i]->format->BytesPerPixel == 4 ? GL_RGBA : GL_RGB;
 	  		glBindTexture(GL_TEXTURE_2D, tex_ids[i]);
 	  		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	  		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	  		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	  		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	  		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texs[i]->w, texs[i]->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, texs[i]->pixels);
+	  		glTexImage2D(GL_TEXTURE_2D, 0, format, texs[i]->w, texs[i]->h, 0, format, GL_UNSIGNED_BYTE, texs[i]->pixels);
 	  		glGenerateMipmap(GL_TEXTURE_2D);
 		}
-		hsh_add_batch(&g_tex_table, succ_load_fnames, tex_ids, num_texs);
+		hsh_add_batch(&g_tex_table, succ_load_paths, tex_ids, num_texs);
 	  	glBindTexture(GL_TEXTURE_2D, 0);
 		for (int i = 0; i < num_texs; ++i)
 			SDL_FreeSurface(texs[i]);
@@ -552,54 +517,60 @@ render_init(const Camera &cam, const Screen &scr)
 	{
 		hsh_init(&g_model_table, temp_str_hash);
 
-		char fnames[256][256]; // temp
-		int num_fnames = get_fnames("assets/models/", fnames);
+		char paths[256][256]; // temp
+		int num_files = get_paths("models/", paths);
 		Raw_Model rawms[256]; // temp
-		char *mdatas[256]; // temp
-		int num_models = load_files(fnames, "r", num_fnames, mdatas);
-		load_raw_models(mdatas, num_models, fnames, rawms);
+		for (int i = 0; i < 1; ++i) {
+			Assimp::Importer import;
+			const aiScene* scene = import.ReadFile("nanosuit.fbx", aiProcess_Triangulate | aiProcess_FlipUVs);
+			if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
+				zerror("Assimp error: %s", import.GetErrorString());
+				continue;
+			}
+			process_node(scene->mRootNode, scene, &rawms[i]);
+		}
 
 		// TEMP
-		GLuint vao_ids[num_models];
-		GLuint buf_ids[num_models*num_glbufs];
+		GLuint vao_ids[256];
+		GLuint buf_ids[256*num_glbufs];
 
-		glGenVertexArrays(num_models, vao_ids);
-		glGenBuffers(num_models*num_glbufs, buf_ids);
+		glGenVertexArrays(256, vao_ids);
+		glGenBuffers(256*num_glbufs, buf_ids);
 
-		for (int i = 0; i < num_models; ++i) {
+		for (int i = 0; i < 1; ++i) {
 			GLuint cur_vao = vao_ids[i];
 			GLuint *cur_bufs = &buf_ids[i*num_glbufs];
 			Raw_Model *rm = &rawms[i];
 
 			glBindVertexArray(cur_vao);
 			glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[vert_buf]);
-			glBufferData(GL_ARRAY_BUFFER, rm->num_verts*sizeof(GLfloat), rm->vertices, GL_STATIC_DRAW);
+			glBufferData(GL_ARRAY_BUFFER, rm->positions.size()*sizeof(GLfloat), rm->positions.data(), GL_STATIC_DRAW);
 			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 			glEnableVertexAttribArray(0);
 
 			glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[norm_buf]);
-			glBufferData(GL_ARRAY_BUFFER, rm->num_norms*sizeof(GLfloat), rm->normals, GL_STATIC_DRAW);
+			glBufferData(GL_ARRAY_BUFFER, rm->normals.size()*sizeof(GLfloat), rm->normals.data(), GL_STATIC_DRAW);
 			glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 			glEnableVertexAttribArray(1);
 
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cur_bufs[ind_buf]);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm->num_inds*sizeof(GLuint), rm->indices, GL_STATIC_DRAW);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm->indices.size()*sizeof(GLuint), rm->indices.data(), GL_STATIC_DRAW);
 
-			if (rm->tex_fname) {
+//			if (rm->tex_fname) {
 				glBindBuffer(GL_ARRAY_BUFFER, cur_bufs[tex_buf]);
-				glBufferData(GL_ARRAY_BUFFER, rm->num_tcoords*sizeof(GLfloat), rm->tex_coords, GL_STATIC_DRAW);
+				glBufferData(GL_ARRAY_BUFFER, rm->uvs.size()*sizeof(GLfloat), rm->uvs.data(), GL_STATIC_DRAW);
 				glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, (GLvoid*)0);
 				glEnableVertexAttribArray(2);
-			}
-			printf("Loaded model file %s\n", fnames[i]);
-			int shader = rm->tex_fname ? tex_sh : notex_sh;
-			int model_ind = g_rgroups[shader].num_models++;
-			Model_Group *mg = &g_rgroups[shader].models[model_ind];
-			mg->vao = cur_vao;
-			mg->ibo = cur_bufs[ind_buf];
-			mg->num_indices = rm->num_inds;
+//			}
+			printf("Loaded model file %s\n", paths[i]);
+//			int shader = rm->tex_fname ? tex_sh : notex_sh;
+			int model_ind = g_rgroups[tex_sh].num_models++;
+			Model *m = &g_rgroups[tex_sh].models[model_ind];
+			m->vao = cur_vao;
+			m->ebo = cur_bufs[ind_buf];
+			m->num_meshes = rm->raw_mesh_infos.size();
 			// get base model name without path and extension
-			char *base_mname = fnames[i];
+			char *base_mname = paths[i];
 			printf("base name %s\n", base_mname);
 			while (*base_mname != '\0' && *base_mname != '.')
 				++base_mname;
@@ -608,13 +579,16 @@ render_init(const Camera &cam, const Screen &scr)
 			while (*(base_mname-1) != '/')
 				--base_mname;
 			printf("base name %s\n", base_mname);
-			hsh_add(&g_model_table, base_mname, {shader, model_ind});
-			mg->diffuse_id = *(hsh_get(g_tex_table, rm->tex_fname));
-			arr_init(&mg->instances);
+			hsh_add(&g_model_table, base_mname, {tex_sh, model_ind});
+			for (int j = 0; j < m->num_meshes; ++j) {
+				m->meshes[j].mat.tex.diffuse_id = *(hsh_get(g_tex_table, rm->raw_mesh_infos[j].diffuse_fname));
+				m->meshes[j].num_indices = rm->raw_mesh_infos[j].num_indices;
+			}
+			arr_init(&m->instances);
 		}
 
 		glBindVertexArray(0);
-		free_raw_models(rawms, num_models);
+	//	free_raw_models(rawms, num_models);
 	}
 }
 
@@ -644,8 +618,8 @@ render_add_instance(const char *name, const glm::vec3 &pos)
 		zerror("tried to add instance of invalid model '%s'", name);
 		return RENDER_ID_ERR;
 	}
-	Model_Group *mg = &g_rgroups[mid->rgroup_id].models[mid->mgroup_id];
-	glm::mat4 *in = arr_alloc(&mg->instances);
+	Model *m = &g_rgroups[mid->rgroup_id].models[mid->mgroup_id];
+	glm::mat4 *in = arr_alloc(&m->instances);
 	*in = glm::mat4();
 	*in = glm::translate(*in, pos);
 	return { mid->rgroup_id, mid->mgroup_id, arr_getid(in) };
@@ -659,33 +633,40 @@ rid_equals(RenderID id1, RenderID id2) {
 void
 render_update_instance(RenderID rid, const glm::vec3 &pos)
 {
+/*
 	if (rid_equals(rid, RENDER_ID_ERR))
 		return;
-	Model_Group *mg = &g_rgroups[rid.rgroup_id].models[rid.mgroup_id];
+	Model *mg = &g_rgroups[rid.rgroup_id].models[rid.mgroup_id];
 	glm::mat4 *in = arr_get(mg->instances, rid.instance_id);
 	*in = glm::translate(*in, pos);
+*/
 }
 
 void
 render()
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-/*	for (int i = 0; i < num_shaders; ++i) {
+	for (int i = 0; i < num_shaders; ++i) {
 		glUseProgram(g_rgroups[i].shader);
 		GLint model_loc = glGetUniformLocation(g_rgroups[i].shader, "u_model");
-		for (Model_Group *m = arr_first(g_rgroups[i].models); m; m = arr_next(g_rgroups[i].models, m)) {
+		for (int mi = 0; mi < g_rgroups[i].num_models; ++mi) {
+			Model *m = &g_rgroups[i].models[mi];
 //			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, g_tex);
 			glBindVertexArray(m->vao);
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m->ibo);
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m->ebo);
 			for (glm::mat4 *in = arr_first(m->instances); in; in = arr_next(m->instances, in)) {
 				glUniformMatrix4fv(model_loc, 1, GL_FALSE, glm::value_ptr(*in));
-				glDrawElements(GL_TRIANGLES, m->num_indices, GL_UNSIGNED_INT, 0);
+				GLuint num_indices_rendered = 0;
+				for (int s = 0; s < m->num_meshes; ++s) {
+					glBindTexture(GL_TEXTURE_2D, m->meshes[s].mat.tex.diffuse_id);
+					glDrawElementsBaseVertex(GL_TRIANGLES, m->meshes[s].num_indices, GL_UNSIGNED_INT, 0, num_indices_rendered);
+					num_indices_rendered += m->meshes[s].num_indices;
+				}
 			}
 		}
 	}
 	glBindVertexArray(0);
-	glUseProgram(0);*/
+	glUseProgram(0);
 }
 
 void

@@ -20,15 +20,7 @@ update_init()
 	g_cubes[0].model.pos.x = 0.0f;
 	g_cubes[0].model.pos.y = 0.0f;
 	g_cubes[0].model.pos.z = 0.0f;
-	g_cubes[0].model.rid = render_add_instance("cube", g_cubes[0].model.pos);
-	g_cubes[1].model.pos.x = 10.0f;
-	g_cubes[1].model.pos.y = 0.0f;
-	g_cubes[1].model.pos.z = 20.0f;
-	g_cubes[1].model.rid = render_add_instance("cube", g_cubes[1].model.pos);
-	g_cubes[2].model.pos.x = 0.0f;
-	g_cubes[2].model.pos.y = -10.0f;
-	g_cubes[2].model.pos.z = 0.0f;
-	g_cubes[2].model.rid = render_add_instance("cube", g_cubes[2].model.pos);
+	g_cubes[0].model.rid = render_add_instance("nanosuit", g_cubes[0].model.pos);
 }
 
 void

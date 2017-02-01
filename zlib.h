@@ -142,6 +142,8 @@ hsh_add_batch(Hash_Table<V,F> *ht, K *keys, V *vals, int n)
 {
 	for (int i = 0; i < n; ++i) {
 		int ind = ht->hash_fn(keys[i]);
+		if (ht->data[ind])
+			printf("collision!!!");
 		ht->data[ind] = vals[i];
 		ht->valid[ind] = true;
 	}
@@ -172,6 +174,6 @@ void error(const char *, int, const char *, bool, const char *, ...);
 char *load_file(const char *, const char *);
 int load_files(const char (*)[256], const char *, int, char **);
 void free_files(char **, unsigned);
-int get_fnames(const char *, char (*)[256]);
+int get_paths(const char *, char (*)[256]);
 
 #endif
