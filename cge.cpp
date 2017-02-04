@@ -199,7 +199,7 @@ main()
 		int winflags = (SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
 		int imgflags = (IMG_INIT_PNG | IMG_INIT_JPG);
 	
-		if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) < 0) {
+		if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) < 0) {
 			zabort("SDL could not initialize video! SDL Error: %s\n", SDL_GetError());
 		}
 

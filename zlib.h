@@ -2,10 +2,10 @@
 #define __ZLIB_H__
 
 #include <string>
+#include <vector>
 #include <stdint.h>
 #include <stddef.h>
 #include <assert.h>
-#include <type_traits>
 #include <stdlib.h>
 #include <experimental/optional>
 
@@ -13,99 +13,104 @@ namespace std {
 	using std::experimental::optional;
 }
 
-// array
-#define ARRAY_MAX 0xFFFF
+#define MAX_PATH_LEN 256
+
+// pool -- array of objects that allows deleted objects to be reused rather than
+// shifting elements around. Each object has a unique ID.
+
+#define POOL_MAX 0xFFFF
 #define INDEX_MASK 0x0000FFFF
-#define KEY_MASK   0xFFFF0000
+#define KEY_MASK 0xFFFF0000
+#define NUM_INDEX_BITS 16
 
 template <typename T>
 struct Element {
 	T data;
-	int id; // for allocd: upper 16 bits are uniqueish key, lower 16 are index into elems
-		        // for freed:  upper 16 are 0, lower 16 are index of next freed
+	uint32_t id; // for allocd: upper 16 bits are unique key, lower 16 are its index
+	             // for freed:  upper 16 are 0, lower 16 are index of next freed
 };
 
 template <typename T>
-struct Array {
-	int key;
+struct Pool {
+	uint32_t key;
 	int free_head;
-	int last_allocd;
-	int len;
+	int last_allocd; // element closest to the end that was ever allocd
+	int capacity;
 	Element<T> *elems;
 };
 
 template <typename T>
 void
-arr_init(Array<T> *a)
+pool_init(Pool<T> *p)
 {
-	a->key = 1;
-	a->free_head = -1;
-	a->last_allocd = -1;
-	a->len = 2;
-	a->elems = (Element<T> *)malloc(sizeof(Element<T>) * a->len);
+	p->key = 1;
+	p->free_head = -1;
+	p->last_allocd = -1;
+	p->capacity = 2;
+	p->elems = (Element<T> *)malloc(sizeof(Element<T>)*p->capacity);
 }
 
 template <typename T>
 T *
-arr_alloc(Array<T> *a)
+pool_alloc(Pool<T> *p)
 {
 	int index;
-	if (a->free_head != -1) {
-		index = a->free_head;
-		a->free_head = a->elems[a->free_head].id & INDEX_MASK;
+	if (p->free_head != -1) {
+		index = p->free_head;
+		p->free_head = p->elems[p->free_head].id & INDEX_MASK;
 	} else {
-		if (++a->last_allocd >= a->len) {
-			a->len *= 2;
-			assert(a->len <= ARRAY_MAX);
-			a->elems = (Element<T> *)realloc(a->elems, sizeof(Element<T>) * a->len);
+		if (++p->last_allocd >= p->capacity) {
+			p->capacity *= 2;
+			assert(p->capacity <= POOL_MAX);
+			p->elems = (Element<T> *)realloc(p->elems, sizeof(Element<T>) * p->capacity);
 		}
-		index = a->last_allocd;
+		index = p->last_allocd;
 	}
-	a->elems[index].id = a->key++ << 16 | index;
-	return &a->elems[index].data;
+	p->elems[index].id = (p->key++ << NUM_INDEX_BITS) | index;
+	return &p->elems[index].data;
 }
 
 template <typename T>
-int
-arr_getid(T *data)
+uint32_t
+pool_getid(T *data)
 {
-	return *(int *)(((char *)data) + offsetof(Element<T>, id));
-}
-
-template <typename T>
-T *
-arr_get(const Array<T> &a, int id)
-{
-	assert(a.elems[id & INDEX_MASK].id == id);
-	return &a.elems[id & INDEX_MASK].data;
+	return *(uint32_t *)(((char *)data) + offsetof(Element<T>, id));
 }
 
 template <typename T>
 T *
-arr_first(const Array<T> &a)
+pool_get(const Pool<T> &p, int id)
 {
-	for (int i = 0; i <= a.last_allocd; ++i) {
-		if ((a.elems[i].id & KEY_MASK) >> 16)
-			return &a.elems[i].data;
+	assert(p.elems[id & INDEX_MASK].id == id);
+	return &p.elems[id & INDEX_MASK].data;
+}
+
+template <typename T>
+T *
+pool_first(const Pool<T> &p)
+{
+	for (int i = 0; i <= p.last_allocd; ++i) {
+		if ((p.elems[i].id & KEY_MASK) >> NUM_INDEX_BITS)
+			return &p.elems[i].data;
 	}
 	return NULL;
 }
 
 template <typename T>
 void
-arr_destroy(const Array<T> &a)
+pool_destroy(const Pool<T> &p)
 {
-	free(a.elems);
+	free(p.elems);
 }
 
 template <typename T>
 T *
-arr_next(const Array<T> &a, T *e)
+pool_next(const Pool<T> &p, T *e)
 {
-	int e_ind = arr_getid(e) & INDEX_MASK;
-	for (int i = e_ind+1; i <= a.last_allocd; ++i) {
-		if ((a.elems[i].id & KEY_MASK) >> 16)
-			return &a.elems[i].data;
+	int e_ind = pool_getid(e) & INDEX_MASK;
+	for (int i = e_ind+1; i <= p.last_allocd; ++i) {
+		if ((p.elems[i].id & KEY_MASK) >> 16)
+			return &p.elems[i].data;
 	}
 	return NULL;
 }
@@ -142,8 +147,6 @@ hsh_add_batch(Hash_Table<V,F> *ht, K *keys, V *vals, int n)
 {
 	for (int i = 0; i < n; ++i) {
 		int ind = ht->hash_fn(keys[i]);
-		if (ht->data[ind])
-			printf("collision!!!");
 		ht->data[ind] = vals[i];
 		ht->valid[ind] = true;
 	}

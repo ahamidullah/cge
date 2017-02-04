@@ -50,25 +50,3 @@ load_file(const char *fname, const char *mode)
 	return buf;
 }
 
-int
-get_paths(const char *dir_name, char (*fnames)[256])
-{
-	DIR *dir;
-	struct dirent *ent;
-	int num_files = 0;
-
-	dir = opendir(dir_name);
-	if (dir) {
-		while ((ent = readdir(dir)) != NULL) {
-			if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, ".."))
-				continue;
-			strcpy(fnames[num_files], dir_name);
-			strcat(fnames[num_files], ent->d_name);
-			++num_files;
-		}
-		closedir(dir);
-	} else
-		zerror("could not open directory %s", dir_name);
-	return num_files;
-}
-
