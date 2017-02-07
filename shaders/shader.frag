@@ -76,7 +76,7 @@ out vec4 t_color;
 		return intensity * vec3(texture(mat.diffuse, t_tex_coords));
 #  endif
 	}
-	
+
 	vec3 diffuse(vec3 intensity, vec3 recv_dir)
 	{
 		float impact = max(dot(t_normal, recv_dir), 0.0f);

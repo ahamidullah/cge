@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <GL/glew.h>
+#include <string>
 #include "zlib.h"
 
 struct RenderID {
@@ -41,7 +42,7 @@ struct Screen {
 
 void render_init(const Camera &, const Screen &);
 void render_update_view(const Camera &);
-RenderID render_add_instance(const char *, const glm::vec3 &);
+RenderID render_add_instance(std::string, const glm::vec3 &);
 void render_update_instance(RenderID, const glm::vec3 &);
 void render();
 void render_quit();
