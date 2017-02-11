@@ -2,7 +2,6 @@
 #define __ZLIB_H__
 
 #include <string>
-#include <vector>
 #include <stdint.h>
 #include <stddef.h>
 #include <assert.h>
@@ -11,13 +10,22 @@
 
 namespace std {
 	using std::experimental::optional;
+	using std::experimental::make_optional;
+	using std::experimental::nullopt;
 }
 
 #define MAX_PATH_LEN 256
 
+
+void error(const char *, int, const char *, bool, const char *, ...);
+#define zabort(fmt, ...) error(__FILE__, __LINE__, __func__, true, fmt, ## __VA_ARGS__)
+#define zerror(fmt, ...) error(__FILE__, __LINE__, __func__, false, fmt, ## __VA_ARGS__)
+
+std::optional<std::string> load_file(const char *, const char *);
+
 // pool -- array of objects that allows deleted objects to be reused rather than
 // shifting elements around. Each object has a unique ID.
-
+/*
 #define POOL_MAX 0xFFFF
 #define INDEX_MASK 0x0000FFFF
 #define KEY_MASK 0xFFFF0000
@@ -114,69 +122,6 @@ pool_next(const Pool<T> &p, T *e)
 	}
 	return NULL;
 }
-
-// hash table
-template <typename V, typename F>
-struct Hash_Table {
-	F hash_fn;
-	V data[100]; // temp
-	bool valid[100];
-};
-
-template<typename V, typename F>
-void
-hsh_init(Hash_Table<V,F> *ht, F hash_fn)
-{
-	ht->hash_fn = hash_fn;
-	for (int i = 0; i < 100; ++i)
-		ht->valid[i] = false;
-}
-
-template <typename K, typename V, typename F>
-void
-hsh_add(Hash_Table<V,F> *ht, K key, V val)
-{
-	int ind = ht->hash_fn(key);
-	ht->data[ind] = val;
-	ht->valid[ind] = true;
-}
-
-template <typename K, typename V, typename F>
-void
-hsh_add_batch(Hash_Table<V,F> *ht, K *keys, V *vals, int n)
-{
-	for (int i = 0; i < n; ++i) {
-		int ind = ht->hash_fn(keys[i]);
-		ht->data[ind] = vals[i];
-		ht->valid[ind] = true;
-	}
-}
-
-template <typename K, typename V, typename F>
-std::optional<V>
-hsh_get(const Hash_Table<V,F> &ht, K key)
-{
-	int i = ht.hash_fn(key);
-	if (!ht.valid[i])
-		return {};
-	return ht.data[i];
-}
-
-template<typename V, typename F>
-void
-hsh_destroy(Hash_Table<V,F> *ht)
-{
-	return; // nothing for now...
-}
-
-void error(const char *, int, const char *, bool, const char *, ...);
-#define zabort(fmt, ...) error(__FILE__, __LINE__, __func__, true, fmt, ## __VA_ARGS__)
-#define zerror(fmt, ...) error(__FILE__, __LINE__, __func__, false, fmt, ## __VA_ARGS__)
-#define ARR_LEN(x) (sizeof(x)/sizeof(x[0]))
-
-char *load_file(const char *, const char *);
-int load_files(const char (*)[256], const char *, int, char **);
-void free_files(char **, unsigned);
-int get_paths(const char *, char (*)[256]);
+*/
 
 #endif

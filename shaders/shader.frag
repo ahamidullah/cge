@@ -1,9 +1,10 @@
-out vec4 t_color;
+out vec4 o_color;
 
-#ifdef NO_LIGHT
+#ifdef UI
+	in vec3 t_color;
 	void main()
 	{
-		t_color = vec4(1.0f);
+		o_color = vec4(t_color, 1.0f);
 	}
 
 #elif defined(TEX) || defined(NO_TEX)
@@ -120,10 +121,8 @@ out vec4 t_color;
 		{
 			vec3 recv_dir = normalize(-dir.direction.xyz);
 			dir_result = ambient(dir.ambient.xyz) +
-			             diffuse(dir.diffuse.xyz, recv_dir);
-/*			dir_result = ambient(dir.ambient.xyz) +
 			             diffuse(dir.diffuse.xyz, recv_dir) +
-			             specular(dir.specular.xyz, recv_dir, view_dir);*/
+			             specular(dir.specular.xyz, recv_dir, view_dir);
 		}
 		// point lights
 		{
@@ -149,10 +148,9 @@ out vec4 t_color;
 					attenuation(spot.position.xyz, spot.constant, spot.linear, spot.quadratic);
 		}
 	
-		//t_color = vec4(dir_result + pt_result + spot_result, 1.0);
-		t_color = vec4(dir_result, 1.0);
+		o_color = vec4(dir_result + pt_result + spot_result, 1.0);
 	}
 
 #else
-#error "Missing shader lighting type: NO_LIGHT, NO_TEX, or TEX."
+#error "Missing shader lighting type: UI, NO_TEX, or TEX."
 #endif

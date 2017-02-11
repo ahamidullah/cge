@@ -3,7 +3,6 @@
 #include <sys/stat.h>
 #include <assert.h>
 #include <SDL2/SDL.h>
-#include <dirent.h>
 #include "zlib.h"
 
 void
@@ -19,20 +18,21 @@ error(const char *filename, int linenum, const char *funcname, bool abort, const
 		exit(1);
 }
 
-char *
+std::optional<std::string>
 load_file(const char *fname, const char *mode)
 {
 	SDL_RWops *fp = SDL_RWFromFile(fname, mode);
 	if (!fp) {
 		zerror("could not load file %s!\n", fname);
-		return NULL;
+		return {};
 	}
 	Sint64 len = SDL_RWsize(fp);
 	if (len < 0) {
 		zerror("could not get %s file length! SDL Error: %s\n", fname, SDL_GetError());
-		return NULL;
+		return {};
 	}
-	char *buf = (char *)malloc(len+1);
+	std::string buf;
+	buf.resize(len+1);
 	// SDL_RWread may return less bytes than requested, so we have to loop
 	Sint64 tot_read = 0, cur_read = 0;
 	char *pos = &buf[0];
@@ -43,10 +43,10 @@ load_file(const char *fname, const char *mode)
 	} while (tot_read < len && cur_read != 0);
 	if (tot_read != len) {
 		zerror("could not read file %s!", fname);
-		return NULL;
+		return {};
 	}
 	buf[len] = '\0';
 	SDL_RWclose(fp);
-	return buf;
+	return std::make_optional(std::move(buf));
 }
 
