@@ -5,7 +5,18 @@ layout (std140) uniform Matrices
 	mat4 u_ortho_proj;
 };
 
-#ifdef UI
+#ifdef TEXT
+	layout (location = 0) in vec3 l_pos;
+	layout (location = 1) in vec3 l_uv;
+	out vec2 t_uv;
+
+	void main()
+	{
+		gl_Position = u_ortho_proj * vec4(l_pos, 1.0);
+		t_uv = l_uv;
+	}
+
+#elif defined(UI)
 	layout (location = 0) in vec3 l_pos;
 	layout (location = 1) in vec3 l_color;
 	out vec3 t_color;
@@ -21,13 +32,12 @@ layout (std140) uniform Matrices
 
 	layout (location = 0) in vec3 l_pos;
 	layout (location = 1) in vec3 l_normal;
-  #ifdef TEX
-	layout(location = 2) in vec2 l_tex_coords;
-  #endif
+
 	out vec3 t_normal;
 	out vec3 t_frag_pos;
   #ifdef TEX
-	out vec2 t_tex_coords;
+	layout(location = 2) in vec2 l_uv;
+	out vec2 t_uv;
   #endif
 	void main()
 	{
@@ -35,7 +45,7 @@ layout (std140) uniform Matrices
 		t_frag_pos = vec3(u_model * vec4(l_pos, 1.0f));
 		t_normal = normalize(mat3(transpose(inverse(u_model))) * l_normal);
   #ifdef TEX
-		t_tex_coords = l_tex_coords;
+		t_uv = l_uv;
   #endif
 	}
 

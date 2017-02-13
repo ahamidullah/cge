@@ -12,10 +12,20 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+
+#define STB_RECT_PACK_IMPLEMENTATION
+#define STB_TRUETYPE_IMPLEMENTATION
+#pragma GCC diagnostic push 
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wfloat-equal"
+#include "stb_truetype.h"
+#pragma GCC diagnostic pop
+
 #include "render.h"
 
 constexpr int MAX_PT_LIGHTS = 4;
 constexpr int MAX_UI_VERTICES = 100;
+constexpr int MAX_TEXT_VERTICES = 1000;
 
 struct Untextured_Mesh {
 	Untextured_Mesh(GLuint ni, GLuint bv) : num_indices(ni), base_vertex(bv) {}
@@ -62,7 +72,7 @@ struct Spot_Light {
 	float quadratic;
 };
 
-struct Vertex {
+struct Model_Vertex {
 	GLfloat position[3];
 	GLfloat normal[3];
 	GLfloat uv[2];
@@ -102,6 +112,19 @@ struct UI_Render_Info {
 	GLuint vbo;
 };
 
+struct Text_Vertex {
+	Vec3f position;
+	Vec2f uv;
+};
+
+struct Font_Info {
+	GLuint vao;
+	GLuint vbo;
+	GLuint tex;
+	std::vector<stbtt_bakedchar> char_data;
+	std::vector<Text_Vertex> vertices;
+};
+
 struct Ubo_Ids {
 	GLuint matrices;
 	GLuint lights;
@@ -117,7 +140,7 @@ struct Raw_Mesh_Info {
 
 struct Raw_Model {
 	std::vector<Raw_Mesh_Info> raw_mesh_infos;
-	std::vector<Vertex> vertices;
+	std::vector<Model_Vertex> vertices;
 	std::vector<GLuint> indices;
 };
 
@@ -135,12 +158,13 @@ static Lights g_lights;
 static Matrices g_matrices;
 static Ubo_Ids g_ubos;
 static UI_Render_Info g_ui_render_info;
+static std::unordered_map<std::string, Font_Info> g_font_map;
 
 std::optional<glm::vec3>
-raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Screen &scr)
+raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Vec2i &screen_dim)
 {
-	float x = (2.0f * screen_ray.x) / scr.w - 1.0f;
-	float y = 1.0f - (2.0f * screen_ray.y) / scr.h;
+	float x = (2.0f * screen_ray.x) / screen_dim.x - 1.0f;
+	float y = 1.0f - (2.0f * screen_ray.y) / screen_dim.y;
 	glm::vec4 clip_ray = glm::vec4(x, y, -1.0f, 1.0f);
 	glm::vec4 eye_ray = glm::inverse(g_matrices.perspective_proj) * clip_ray;
 	eye_ray = glm::vec4(eye_ray.x, eye_ray.y, -1.0f, 0.0f);
@@ -188,7 +212,7 @@ process_node(aiNode* node, const aiScene* scene, Raw_Model *rm)
 		GLuint base_index = rm->vertices.size();
 		assert(mesh->HasPositions() && mesh->HasNormals() && mesh->HasFaces());
 		for (unsigned i = 0; i < mesh->mNumVertices; ++i) {
-			Vertex v;
+			Model_Vertex v;
 			v.position[0] = mesh->mVertices[i].x;
 			v.position[1] = mesh->mVertices[i].y;
 			v.position[2] = mesh->mVertices[i].z;
@@ -323,6 +347,8 @@ get_texture(std::string path, GLuint gl_tex_unit)
 	return tex_id;
 }
 
+#define GET_BASE_NAME(path) path.substr(path.find_last_of('/')+1, path.find_last_of('.') - path.find_last_of('/')+1);
+
 // Loading is all temp so don't really care if it's slow
 void
 load_models()
@@ -356,11 +382,11 @@ load_models()
 
 		glBindVertexArray(vao_ids[i]);
 		glBindBuffer(GL_ARRAY_BUFFER, vbo_ids[i]);
-		glBufferData(GL_ARRAY_BUFFER, rm.vertices.size()*sizeof(Vertex), rm.vertices.data(), GL_STATIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, rm.vertices.size()*sizeof(Model_Vertex), rm.vertices.data(), GL_STATIC_DRAW);
 
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)0);
-		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)(sizeof(GLfloat)*3));
-		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid*)(sizeof(GLfloat)*6));
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)0);
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)(sizeof(GLfloat)*3));
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid*)(sizeof(GLfloat)*6));
 
 		glEnableVertexAttribArray(0);
 		glEnableVertexAttribArray(1);
@@ -369,11 +395,10 @@ load_models()
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_ids[i]);
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm.indices.size()*sizeof(GLuint), rm.indices.data(), GL_STATIC_DRAW);
 
-		size_t start = paths[i].find_last_of('/')+1, end = paths[i].find_last_of('.');
-		std::string base_name = paths[i].substr(start, end - start);
+		//size_t start = paths[i].find_last_of('/')+1, end = paths[i].find_last_of('.');
 		g_models.emplace_back(vao_ids[i], vbo_ids[i]);
-		g_model_map[base_name] = g_models.size()-1;
-		printf("loaded model %s\n", base_name.c_str());
+		g_model_map[GET_BASE_NAME(paths[i])] = g_models.size()-1;
+		printf("loaded model %s\n", GET_BASE_NAME(paths[i]).c_str());
 
 		for (const auto &rmi : rm.raw_mesh_infos) {
 			if (!rmi.diffuse_path) {
@@ -408,7 +433,7 @@ load_models()
 }
 
 void
-render_init(const Camera &cam, const Screen &scr)
+render_init(const Camera &cam, const Vec2i &screen_dim)
 {
 	// init glew
 	{
@@ -420,7 +445,7 @@ render_init(const Camera &cam, const Screen &scr)
 
 	glEnable(GL_DEPTH_TEST);
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-	glViewport(0, 0, scr.w, scr.h);
+	glViewport(0, 0, screen_dim.x, screen_dim.y);
 
 	// init shaders
 	{
@@ -447,7 +472,7 @@ render_init(const Camera &cam, const Screen &scr)
 		glGenBuffers(1, &g_ubos.matrices);
 
 		render_update_view(cam);
-		render_update_projection(cam, scr);
+		render_update_projection(cam, screen_dim);
 		glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
 		glBufferData(GL_UNIFORM_BUFFER, sizeof(Matrices), &g_matrices, GL_STATIC_DRAW);
 		glBindBuffer(GL_UNIFORM_BUFFER, 0);
@@ -499,6 +524,7 @@ render_init(const Camera &cam, const Screen &scr)
 
 	// init ui render info
 	{
+		// TODO: use index buffer for ui vertices
 		glGenVertexArrays(1, &g_ui_render_info.vao);
 		glGenBuffers(1, &g_ui_render_info.vbo);
 
@@ -511,6 +537,40 @@ render_init(const Camera &cam, const Screen &scr)
 
 		glEnableVertexAttribArray(0);
 		glEnableVertexAttribArray(1);
+	}
+
+	// load fonts
+	{
+		const char *font_fnames = {
+			"fonts/Anonymous Pro.ttf"
+		};
+		// TODO: use index buffer for font vertices
+		unsigned char bitmap_buf[512*512];
+		unsigned char ttf_buf[1<<20]; // temp
+		for (int i = 0; i < sizeof(font_fnames)/sizeof(font_fnames[0]); ++i) {
+			fread(ttf_buf, 1, 1<<20, fopen(font_fnames[i], "rb"));
+			assert(ttf_buf);
+			Font_Info *fi = &g_font_map[GET_BASE_NAME(font_fnames[i])];
+			stbtt_BakeFontBitmap(ttf_buf, 0, 32.0, bitmap_buf, 512, 512, 32, 96, fi->char_data); // no guarantee this fits!
+
+			glGenTextures(1, &fi->tex);
+			glBindTexture(GL_TEXTURE_2D, fi->tex);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, 512, 512, 0, GL_ALPHA, GL_UNSIGNED_BYTE, bitmap_buf);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+			glGenVertexArrays(1, &fi->vao);
+			glGenBuffers(1, &fi->vbo);
+
+			glBindVertexArray(fi->vao);
+			glBindBuffer(GL_ARRAY_BUFFER, g_ui_render_info.vbo);
+			glBufferData(GL_ARRAY_BUFFER, MAX_TEXT_VERTICES*sizeof(Text_Vertex), NULL, GL_STATIC_DRAW);
+
+			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Text_Vertex), (GLvoid *)offsetof(Text_Vertex, position));
+			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Text_Vertex), (GLvoid *)offsetof(Text_Vertex, uv));
+
+			glEnableVertexAttribArray(0);
+			glEnableVertexAttribArray(1);
+		}
 	}
 
 	load_models();
@@ -532,9 +592,9 @@ render_update_view(const Camera &cam)
 }
 
 void
-render_update_projection(const Camera &cam, const Screen &scr)
+render_update_projection(const Camera &cam, const Vec2i &screen_dim)
 {
-	g_matrices.perspective_proj = glm::perspective(cam.fov, (float)scr.w / (float)scr.h, cam.near, cam.far);
+	g_matrices.perspective_proj = glm::perspective(cam.fov, (float)screen_dim.x / (float)screen_dim.y, cam.near, cam.far);
 	g_matrices.ortho_proj = glm::ortho(0.0f, 100.0f, 100.0f, 0.0f);
 	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
 	// TODO: We could combine these calls (will break if Matrices changes)
@@ -608,6 +668,27 @@ render_ui(const UI_State &ui)
 	glBindBuffer(GL_ARRAY_BUFFER, g_ui_render_info.vbo);
 	glBufferSubData(GL_ARRAY_BUFFER, 0, ui.vertices.size()*sizeof(UI_Vertex), ui.vertices.data());
 	glDrawArrays(GL_TRIANGLES, 0, ui.vertices.size());
+
+	// assume orthographic projection with units = screen pixels, origin at top left
+	char t[] = "this is just a test";
+	char *text = t;
+	float x = 0.0f, y = 0.0f;
+	glEnable(GL_TEXTURE_2D);
+	glBindTexture(GL_TEXTURE_2D, font_tex);
+	glBegin(GL_QUADS);
+	while (*text) {
+		if (*text >= 32 && *text < 128) {
+			 stbtt_aligned_quad q;
+			 stbtt_GetBakedQuad(cdata, 512, 512, *text-32, &x, &y, &q, 1); // 1=opengl&d3d10+, 0=d3d9
+			 glTexCoord2f(q.s0,q.t1); glVertex2f(q.x0,q.y0);
+			 glTexCoord2f(q.s1,q.t1); glVertex2f(q.x1,q.y0);
+			 glTexCoord2f(q.s1,q.t0); glVertex2f(q.x1,q.y1);
+			 glTexCoord2f(q.s0,q.t0); glVertex2f(q.x0,q.y1);
+		}
+		++text;
+	}
+	glEnd();
+
 }
 
 void

@@ -35,8 +35,6 @@ update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 
 	if (is_first_person) {
 		if (m.motion.x != 0 || m.motion.y != 0) {
-			//cam->yaw += (m.pos.x - m.last_pos.x) * m.sensitivity;
-			//cam->pitch += (m.last_pos.y - m.pos.y) * m.sensitivity; //reversed because y coord range from top to bottom
 			cam->yaw += m.motion.x * m.sensitivity;
 			cam->pitch -= m.motion.y * m.sensitivity; //reversed because y coord range from top to bottom
 			if (cam->pitch > 89.0f) {
@@ -83,20 +81,14 @@ update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 	}
 }
 
-enum program_state {
-	run_state = 0,
-	pause_state,
-	exit_state
-};
-
-program_state
-handle_events(Keyboard *kb, Mouse *m, const Screen &scr, const Camera &cam)
+Program_State
+handle_events(Keyboard *kb, Mouse *m, const Vec2i &screen_dim, const Camera &cam)
 {
 	SDL_Event e;
 	while(SDL_PollEvent(&e) != 0) {
 		switch (e.type) {
 		case SDL_QUIT:
-			return exit_state;
+			return Program_State::exit;
 		case SDL_KEYDOWN:
 			input_key_down(kb, e.key);
 			break;
@@ -105,7 +97,7 @@ handle_events(Keyboard *kb, Mouse *m, const Screen &scr, const Camera &cam)
 			break;
 		case SDL_MOUSEBUTTONDOWN: 
 		{
-			auto pos = raycast_plane(glm::vec2(e.button.x, e.button.y), glm::vec3(0.0f, 1.0f, 0.0f), cam.pos, 0.0f, scr);
+			auto pos = raycast_plane(glm::vec2(e.button.x, e.button.y), glm::vec3(0.0f, 1.0f, 0.0f), cam.pos, 0.0f, screen_dim);
 			if (pos)
 				mk_point_light(*pos);
 			input_mbutton_down(e.button, m);
@@ -116,7 +108,7 @@ handle_events(Keyboard *kb, Mouse *m, const Screen &scr, const Camera &cam)
 			break;
 		}
 	}
-	return run_state;
+	return Program_State::run;
 }
 
 int
@@ -126,7 +118,7 @@ main()
 	Keyboard kb = { {0}, {0} };
 	Camera cam = { 0.0f, 0.0f, 1.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 45.0f, 0.1f, 100.0f };
 	Mouse mouse = { {400, 300}, {400, 300}, 0.1f, 0 };
-	Screen screen = { 1000, 800 };
+	Vec2i screen_dim = { 1000, 800 };
 	UI_State ui;
 	SDL_Window *window;
 	SDL_GLContext context;
@@ -144,7 +136,7 @@ main()
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
-		if (!(window = SDL_CreateWindow("cge", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, screen.w, screen.h, winflags))) {
+		if (!(window = SDL_CreateWindow("cge", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, screen_dim.x, screen_dim.y, winflags))) {
 			zabort("SDL could not create a window! SDL Error: %s\n", SDL_GetError());
 		}
 		if (!(IMG_Init(imgflags) & imgflags)) {
@@ -155,27 +147,28 @@ main()
 		}
 	}
 
-	render_init(cam, screen);
+	render_init(cam, screen_dim);
 	update_init();
+	ui_init(&ui);
 
-	program_state state = run_state;
+	Program_State state = Program_State::run;
 	constexpr unsigned TICKS_PER_SECOND =  25;
 	constexpr unsigned SKIP_TICKS = 1000/TICKS_PER_SECOND;
 	constexpr unsigned MAX_FRAMESKIP = 5;
 	unsigned num_updates = 0;
 	unsigned next_tick = SDL_GetTicks();
 
-	while (state != exit_state) {
+	while (state != Program_State::exit) {
 		switch (state) {
-		case run_state: {
+		case Program_State::run: {
 			num_updates = 0;
 			while (next_tick < SDL_GetTicks() && num_updates < MAX_FRAMESKIP) {
-				state = handle_events(&kb, &mouse, screen, cam);
+				state = handle_events(&kb, &mouse, screen_dim, cam);
 				input_update_mouse(&mouse);
 				update_camera(mouse, &kb, &cam);
 				render_update_view(cam);
 				update_sim();
-				ui_update(mouse, screen.w, screen.h, &ui);
+				state = ui_update(mouse, screen_dim, state, &ui);
 				next_tick += SKIP_TICKS;
 				++num_updates;
 			}
@@ -184,9 +177,9 @@ main()
 			SDL_GL_SwapWindow(window);
 			break;
 		}
-		case pause_state:
+		case Program_State::pause:
 			break;
-		case exit_state:
+		case Program_State::exit:
 			break;
 		}
 	}

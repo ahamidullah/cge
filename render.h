@@ -27,20 +27,15 @@ struct Camera {
 	float far;
 };
 
-struct Screen {
-	int w;
-	int h;
-};
-
-void render_init(const Camera &, const Screen &);
+void render_init(const Camera &, const Vec2i &);
 void render_update_view(const Camera &);
-void render_update_projection(const Camera &, const Screen &);
+void render_update_projection(const Camera &, const Vec2i &);
 std::optional<Render_Id> render_add_instance(std::string, const glm::vec3 &);
 void render_update_instance(const Render_Id, const glm::vec3 &);
 void render_sim();
 void render_ui(const UI_State &);
 void render_quit();
 void mk_point_light(glm::vec3 pos);
-std::optional<glm::vec3> raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Screen &);
+std::optional<glm::vec3> raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Vec2i &);
 
 #endif
