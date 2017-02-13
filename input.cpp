@@ -4,8 +4,11 @@ void
 input_key_down(Keyboard *kb, const SDL_KeyboardEvent& e)
 {
 	kb->keys[e.keysym.scancode] = true;
-	if (!e.repeat)
+	if (e.repeat)
+		kb->keys_toggle[e.keysym.scancode] = false;
+	else
 		kb->keys_toggle[e.keysym.scancode] = true;
+		
 }
 
 void
@@ -29,7 +32,7 @@ input_was_key_pressed(Keyboard *kb, const SDL_Keycode k)
 {
 	SDL_Scancode sc = SDL_GetScancodeFromKey(k);
 	if (kb->keys_toggle[sc]) {
-		kb->keys_toggle[sc] = false;
+		//kb->keys_toggle[sc] = false;
 		return true;
 	}
 	return false;

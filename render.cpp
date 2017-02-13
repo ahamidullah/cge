@@ -347,7 +347,7 @@ get_texture(std::string path, GLuint gl_tex_unit)
 	return tex_id;
 }
 
-#define GET_BASE_NAME(path) path.substr(path.find_last_of('/')+1, path.find_last_of('.') - path.find_last_of('/')+1);
+#define GET_BASE_NAME(path) path.substr(path.find_last_of('/')+1, path.find_last_of('.') - (path.find_last_of('/')+1))
 
 // Loading is all temp so don't really care if it's slow
 void
@@ -541,7 +541,7 @@ render_init(const Camera &cam, const Vec2i &screen_dim)
 
 	// load fonts
 	{
-		const char *font_fnames = {
+/*		const char *font_fnames = {
 			"fonts/Anonymous Pro.ttf"
 		};
 		// TODO: use index buffer for font vertices
@@ -571,6 +571,7 @@ render_init(const Camera &cam, const Vec2i &screen_dim)
 			glEnableVertexAttribArray(0);
 			glEnableVertexAttribArray(1);
 		}
+		*/
 	}
 
 	load_models();
@@ -670,6 +671,7 @@ render_ui(const UI_State &ui)
 	glDrawArrays(GL_TRIANGLES, 0, ui.vertices.size());
 
 	// assume orthographic projection with units = screen pixels, origin at top left
+	/*
 	char t[] = "this is just a test";
 	char *text = t;
 	float x = 0.0f, y = 0.0f;
@@ -688,6 +690,7 @@ render_ui(const UI_State &ui)
 		++text;
 	}
 	glEnd();
+	*/
 
 }
 

@@ -12,7 +12,7 @@ out vec4 o_color;
 	in vec3 t_frag_pos;
 	uniform vec3 u_view_pos;
 #  ifdef TEX
-	in vec2 t_tex_coords;
+	in vec2 t_uv;
 	struct Material {
 		sampler2D diffuse;
 		sampler2D specular;
@@ -74,7 +74,7 @@ out vec4 o_color;
 #  ifdef NO_TEX
 		return intensity * mat.ambient;
 #  else
-		return intensity * vec3(texture(mat.diffuse, t_tex_coords));
+		return intensity * vec3(texture(mat.diffuse, t_uv));
 #  endif
 	}
 
@@ -84,7 +84,7 @@ out vec4 o_color;
 #  ifdef NO_TEX
 		return intensity * impact * mat.diffuse;
 #  else
-		return intensity * impact * vec3(texture(mat.diffuse, t_tex_coords));
+		return intensity * impact * vec3(texture(mat.diffuse, t_uv));
 #  endif
 	}
 	
@@ -95,7 +95,7 @@ out vec4 o_color;
 #  ifdef NO_TEX
 		return intensity * impact * mat.specular;
 #  else
-		return intensity * impact * vec3(texture(mat.specular, t_tex_coords));
+		return intensity * impact * vec3(texture(mat.specular, t_uv));
 #  endif
 	}
 	
