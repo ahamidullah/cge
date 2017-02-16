@@ -1,17 +1,27 @@
 out vec4 o_color;
 
-#ifdef UI
+#ifdef TEXT
+	uniform sampler2D u_texture;
+	in vec2 t_uv;
+
+	void main()
+	{
+		vec4 c = texture(u_texture, t_uv);
+		o_color = vec4(c.r, c.r, c.r, c.r);
+	}
+
+#elif defined(UI)
 	in vec3 t_color;
 	void main()
 	{
 		o_color = vec4(t_color, 1.0f);
 	}
 
-#elif defined(TEX) || defined(NO_TEX)
+#elif defined(TEXTURED_MESH) || defined(UNTEXTURED_MESH)
 	in vec3 t_normal;
 	in vec3 t_frag_pos;
 	uniform vec3 u_view_pos;
-#  ifdef TEX
+#  ifdef TEXTURED_MESH
 	in vec2 t_uv;
 	struct Material {
 		sampler2D diffuse;
@@ -71,7 +81,7 @@ out vec4 o_color;
 
 	vec3 ambient(vec3 intensity)
 	{
-#  ifdef NO_TEX
+#  ifdef UNTEXTURED_MESH
 		return intensity * mat.ambient;
 #  else
 		return intensity * vec3(texture(mat.diffuse, t_uv));
@@ -81,7 +91,7 @@ out vec4 o_color;
 	vec3 diffuse(vec3 intensity, vec3 recv_dir)
 	{
 		float impact = max(dot(t_normal, recv_dir), 0.0f);
-#  ifdef NO_TEX
+#  ifdef UNTEXTURED_MESH
 		return intensity * impact * mat.diffuse;
 #  else
 		return intensity * impact * vec3(texture(mat.diffuse, t_uv));
@@ -92,7 +102,7 @@ out vec4 o_color;
 	{
 		vec3 reflect_dir = reflect(-recv_dir, t_normal);
 		float impact = pow(max(dot(view_dir, reflect_dir), 0.0), mat.shininess);
-#  ifdef NO_TEX
+#  ifdef UNTEXTURED_MESH
 		return intensity * impact * mat.specular;
 #  else
 		return intensity * impact * vec3(texture(mat.specular, t_uv));
@@ -152,5 +162,5 @@ out vec4 o_color;
 	}
 
 #else
-#error "Missing shader lighting type: UI, NO_TEX, or TEX."
+#error "Missing shader lighting type: UI, UNTEXTURED_MESH, or TEXTURED_MESH."
 #endif

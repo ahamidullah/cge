@@ -7,12 +7,13 @@ layout (std140) uniform Matrices
 
 #ifdef TEXT
 	layout (location = 0) in vec3 l_pos;
-	layout (location = 1) in vec3 l_uv;
+	layout (location = 1) in vec2 l_uv;
 	out vec2 t_uv;
 
 	void main()
 	{
 		gl_Position = u_ortho_proj * vec4(l_pos, 1.0);
+		//gl_Position = vec4(l_pos, 1.0);
 		t_uv = l_uv;
 	}
 
@@ -27,7 +28,7 @@ layout (std140) uniform Matrices
 		gl_Position = u_ortho_proj * vec4(l_pos, 1.0f);
 	}
 
-#elif defined(TEX) || defined(NO_TEX)
+#elif defined(TEXTURED_MESH) || defined(UNTEXTURED_MESH)
 	uniform mat4 u_model;
 
 	layout (location = 0) in vec3 l_pos;
@@ -35,7 +36,7 @@ layout (std140) uniform Matrices
 
 	out vec3 t_normal;
 	out vec3 t_frag_pos;
-  #ifdef TEX
+  #ifdef TEXTURED_MESH
 	layout(location = 2) in vec2 l_uv;
 	out vec2 t_uv;
   #endif
@@ -44,11 +45,11 @@ layout (std140) uniform Matrices
 		gl_Position = u_perspective_proj * u_view * u_model * vec4(l_pos, 1.0f);
 		t_frag_pos = vec3(u_model * vec4(l_pos, 1.0f));
 		t_normal = normalize(mat3(transpose(inverse(u_model))) * l_normal);
-  #ifdef TEX
+  #ifdef TEXTURED_MESH
 		t_uv = l_uv;
   #endif
 	}
 
 #else
-#error "Missing shader lighting type: UI, NO_TEX, or TEX."
+#error "Missing shader lighting type: TEXT, UI, UNTEXTURED_MESH, or TEXTURED_MESH."
 #endif

@@ -112,17 +112,23 @@ struct UI_Render_Info {
 	GLuint vbo;
 };
 
-struct Text_Vertex {
+struct Glyph_Vertex {
 	Vec3f position;
 	Vec2f uv;
 };
 
-struct Font_Info {
+struct Glyph {
+	Glyph_Vertex vertices[6];
+	float x_advance;
+};
+
+struct Font {
 	GLuint vao;
 	GLuint vbo;
-	GLuint tex;
-	std::vector<stbtt_bakedchar> char_data;
-	std::vector<Text_Vertex> vertices;
+	GLuint texture;
+	std::vector<Glyph_Vertex> glyph_buffer;
+	//std::vector<stbtt_packedchar> char_data;
+	std::unordered_map<char, Glyph> glyph_map;
 };
 
 struct Ubo_Ids {
@@ -145,20 +151,21 @@ struct Raw_Model {
 };
 
 struct Shader_Ids {
-	GLuint tex;
-	GLuint notex;
+	GLuint textured_mesh;
+	GLuint untextured_mesh;
 	GLuint ui;
+	GLuint text;
 };
 
 static std::unordered_map<std::string, size_t> g_model_map;
 static std::unordered_map<std::string, GLuint> g_tex_map;
+static std::unordered_map<std::string, Font> g_font_map;
 static std::vector<Model> g_models;
 static Shader_Ids g_shaders;
 static Lights g_lights;
 static Matrices g_matrices;
 static Ubo_Ids g_ubos;
 static UI_Render_Info g_ui_render_info;
-static std::unordered_map<std::string, Font_Info> g_font_map;
 
 std::optional<glm::vec3>
 raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Vec2i &screen_dim)
@@ -454,9 +461,10 @@ render_init(const Camera &cam, const Vec2i &screen_dim)
 		std::optional<std::string> frag = load_file("shaders/shader.frag", "r");
 		assert(frag);
 
-		g_shaders.tex = make_gpu_program(*vert, *frag, "#define TEX\n");
-		g_shaders.notex = make_gpu_program(*vert, *frag, "#define NO_TEX\n");
+		g_shaders.textured_mesh = make_gpu_program(*vert, *frag, "#define TEXTURED_MESH\n");
+		g_shaders.untextured_mesh = make_gpu_program(*vert, *frag, "#define UNTEXTURED_MESH\n");
 		g_shaders.ui = make_gpu_program(*vert, *frag, "#define UI\n");
+		g_shaders.text = make_gpu_program(*vert, *frag, "#define TEXT\n");
 	}
 
 	auto set_bind_pt = [](const GLuint program, const char *name, const GLuint bind_pt) {
@@ -466,8 +474,8 @@ render_init(const Camera &cam, const Vec2i &screen_dim)
 
 	// init matrix ubo
 	{
-		set_bind_pt(g_shaders.tex, "Matrices", 0);
-		set_bind_pt(g_shaders.notex, "Matrices", 0);
+		set_bind_pt(g_shaders.textured_mesh, "Matrices", 0);
+		set_bind_pt(g_shaders.untextured_mesh, "Matrices", 0);
 		set_bind_pt(g_shaders.ui, "Matrices", 0);
 		glGenBuffers(1, &g_ubos.matrices);
 
@@ -481,8 +489,8 @@ render_init(const Camera &cam, const Vec2i &screen_dim)
 
 	// init light ubo
 	{
-		set_bind_pt(g_shaders.tex, "Lights", 1);
-		set_bind_pt(g_shaders.notex, "Lights", 1);
+		set_bind_pt(g_shaders.textured_mesh, "Lights", 1);
+		set_bind_pt(g_shaders.untextured_mesh, "Lights", 1);
 		glGenBuffers(1, &g_ubos.lights);
 
 		g_lights.dir.direction = glm::vec4(-2.2f, 0.0f, -1.3f, 0.0f);
@@ -508,16 +516,16 @@ render_init(const Camera &cam, const Vec2i &screen_dim)
 
 	// init material uniform
 	{
-		glUseProgram(g_shaders.notex);
-		glUniform3f(glGetUniformLocation(g_shaders.notex, "mat.ambient"),  1.0f, 0.5f, 0.31f);
-		glUniform3f(glGetUniformLocation(g_shaders.notex, "mat.diffuse"),  1.0f, 0.5f, 0.31f);
-		glUniform3f(glGetUniformLocation(g_shaders.notex, "mat.specular"), 0.5f, 0.5f, 0.5f);
-		glUniform1f(glGetUniformLocation(g_shaders.notex, "mat.shininess"), 64.0f);
+		glUseProgram(g_shaders.untextured_mesh);
+		glUniform3f(glGetUniformLocation(g_shaders.untextured_mesh, "mat.ambient"),  1.0f, 0.5f, 0.31f);
+		glUniform3f(glGetUniformLocation(g_shaders.untextured_mesh, "mat.diffuse"),  1.0f, 0.5f, 0.31f);
+		glUniform3f(glGetUniformLocation(g_shaders.untextured_mesh, "mat.specular"), 0.5f, 0.5f, 0.5f);
+		glUniform1f(glGetUniformLocation(g_shaders.untextured_mesh, "mat.shininess"), 64.0f);
 
-		glUseProgram(g_shaders.tex);
-		glUniform1i(glGetUniformLocation(g_shaders.tex, "mat.diffuse"), 0);
-		glUniform1i(glGetUniformLocation(g_shaders.tex, "mat.specular"), 1);
-		glUniform1f(glGetUniformLocation(g_shaders.tex, "mat.shininess"), 64.0f);
+		glUseProgram(g_shaders.textured_mesh);
+		glUniform1i(glGetUniformLocation(g_shaders.textured_mesh, "mat.diffuse"), 0);
+		glUniform1i(glGetUniformLocation(g_shaders.textured_mesh, "mat.specular"), 1);
+		glUniform1f(glGetUniformLocation(g_shaders.textured_mesh, "mat.shininess"), 64.0f);
 
 		glUseProgram(0);
 	}
@@ -541,37 +549,74 @@ render_init(const Camera &cam, const Vec2i &screen_dim)
 
 	// load fonts
 	{
-/*		const char *font_fnames = {
+		std::vector<std::string> font_paths = {
 			"fonts/Anonymous Pro.ttf"
 		};
 		// TODO: use index buffer for font vertices
-		unsigned char bitmap_buf[512*512];
+		unsigned char atlas_buf[512*512]; // temp
 		unsigned char ttf_buf[1<<20]; // temp
-		for (int i = 0; i < sizeof(font_fnames)/sizeof(font_fnames[0]); ++i) {
-			fread(ttf_buf, 1, 1<<20, fopen(font_fnames[i], "rb"));
-			assert(ttf_buf);
-			Font_Info *fi = &g_font_map[GET_BASE_NAME(font_fnames[i])];
-			stbtt_BakeFontBitmap(ttf_buf, 0, 32.0, bitmap_buf, 512, 512, 32, 96, fi->char_data); // no guarantee this fits!
+		for (auto fp : font_paths) {
+			glUseProgram(g_shaders.text);
+			char first_char = ' ', last_char = '~';
 
-			glGenTextures(1, &fi->tex);
-			glBindTexture(GL_TEXTURE_2D, fi->tex);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, 512, 512, 0, GL_ALPHA, GL_UNSIGNED_BYTE, bitmap_buf);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			// rasterize the font
+			fread(ttf_buf, 1, 1<<20, fopen(fp.c_str(), "rb"));
+			Font *font = &g_font_map[GET_BASE_NAME(fp)];
+			//font->char_data.resize(last_char - first_char);
+			stbtt_packedchar char_data[last_char - first_char];
+			stbtt_pack_context context;
+			if (!stbtt_PackBegin(&context, atlas_buf, 512, 512, 0, 1, NULL))
+				zabort("Failed to initialize font %s", fp.c_str());
+			stbtt_PackSetOversampling(&context, 2, 2);
+			if (!stbtt_PackFontRange(&context, ttf_buf, 0, 32, first_char, last_char - first_char, char_data))
+				zabort("Failed to pack font %s", fp.c_str());
+			stbtt_PackEnd(&context);
 
-			glGenVertexArrays(1, &fi->vao);
-			glGenBuffers(1, &fi->vbo);
+			glGenTextures(1, &font->texture);
+			glBindTexture(GL_TEXTURE_2D, font->texture);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 512, 512, 0, GL_RED, GL_UNSIGNED_BYTE, atlas_buf);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, 8);
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			glHint(GL_GENERATE_MIPMAP_HINT, GL_NICEST);
+			glGenerateMipmap(GL_TEXTURE_2D);
 
-			glBindVertexArray(fi->vao);
-			glBindBuffer(GL_ARRAY_BUFFER, g_ui_render_info.vbo);
-			glBufferData(GL_ARRAY_BUFFER, MAX_TEXT_VERTICES*sizeof(Text_Vertex), NULL, GL_STATIC_DRAW);
+			glGenVertexArrays(1, &font->vao);
+			glGenBuffers(1, &font->vbo);
 
-			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Text_Vertex), (GLvoid *)offsetof(Text_Vertex, position));
-			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Text_Vertex), (GLvoid *)offsetof(Text_Vertex, uv));
+			glBindVertexArray(font->vao);
+			glBindBuffer(GL_ARRAY_BUFFER, font->vbo);
+			glBufferData(GL_ARRAY_BUFFER, MAX_TEXT_VERTICES*sizeof(Glyph_Vertex), NULL, GL_STATIC_DRAW);
+
+			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Glyph_Vertex), (GLvoid *)offsetof(Glyph_Vertex, position));
+			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Glyph_Vertex), (GLvoid *)offsetof(Glyph_Vertex, uv));
 
 			glEnableVertexAttribArray(0);
 			glEnableVertexAttribArray(1);
+
+			glUniform1i(glGetUniformLocation(g_shaders.text, "u_texture"), 0);
+
+			// stbtt gives us positions in screen space, but our ortho projection is from 0.0f to 100.0f, so we have to normalize
+			float scale_x = 100.0f / screen_dim.x, scale_y = 100.0f / screen_dim.y; 
+			stbtt_aligned_quad q;
+			for (char ch = first_char; ch <= last_char; ++ch) {
+				float x = 0.0f, y = 0.0f;
+				float x_advance = stbtt_GetPackedQuad(char_data, 512, 512, ch - first_char, &x, &y, &q, 0);
+
+				Glyph *g = &font->glyph_map[ch];
+				// TODO: use an index buffer
+				g->vertices[0] = { {q.x0*scale_x, q.y1*scale_y, 0.0f}, {q.s0, q.t1}};
+				g->vertices[1] = { {q.x0*scale_x, q.y0*scale_y, 0.0f}, {q.s0, q.t0}};
+				g->vertices[2] = { {q.x1*scale_x, q.y0*scale_y, 0.0f}, {q.s1, q.t0}};
+				g->vertices[3] = { {q.x0*scale_x, q.y1*scale_y, 0.0f}, {q.s0, q.t1}};
+				g->vertices[4] = { {q.x1*scale_x, q.y0*scale_y, 0.0f}, {q.s1, q.t0}};
+				g->vertices[5] = { {q.x1*scale_x, q.y1*scale_y, 0.0f}, {q.s1, q.t1}};
+				g->x_advance = x_advance*scale_x;
+			}
 		}
-		*/
 	}
 
 	load_models();
@@ -586,8 +631,8 @@ render_update_view(const Camera &cam)
 	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
 	// TODO: We could split this function up and avoid updating the view pos when only our facing direction changes
-	glUseProgram(g_shaders.tex);
-	glUniform3f(glGetUniformLocation(g_shaders.tex, "u_view_pos"), cam.pos.x, cam.pos.y, cam.pos.z);
+	glUseProgram(g_shaders.textured_mesh);
+	glUniform3f(glGetUniformLocation(g_shaders.textured_mesh, "u_view_pos"), cam.pos.x, cam.pos.y, cam.pos.z);
 	glUseProgram(0);
 
 }
@@ -597,6 +642,7 @@ render_update_projection(const Camera &cam, const Vec2i &screen_dim)
 {
 	g_matrices.perspective_proj = glm::perspective(cam.fov, (float)screen_dim.x / (float)screen_dim.y, cam.near, cam.far);
 	g_matrices.ortho_proj = glm::ortho(0.0f, 100.0f, 100.0f, 0.0f);
+	//g_matrices.ortho_proj = glm::ortho(0.0f, (float)screen_dim.x, (float)screen_dim.y, 0.0f);
 	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
 	// TODO: We could combine these calls (will break if Matrices changes)
 	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, perspective_proj), sizeof(g_matrices.perspective_proj), glm::value_ptr(g_matrices.perspective_proj));
@@ -636,13 +682,13 @@ void
 render_sim()
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	GLint tex_model_loc = glGetUniformLocation(g_shaders.tex, "u_model");
-	GLint notex_model_loc = glGetUniformLocation(g_shaders.notex, "u_model");
+	GLint tex_model_loc = glGetUniformLocation(g_shaders.textured_mesh, "u_model");
+	GLint notex_model_loc = glGetUniformLocation(g_shaders.untextured_mesh, "u_model");
 	for (const auto &model : g_models) {
 		glBindVertexArray(model.vao);
 		glBindBuffer(GL_ARRAY_BUFFER, model.vbo);
 		for (const auto &instance : model.instances) {
-			glUseProgram(g_shaders.tex);
+			glUseProgram(g_shaders.textured_mesh);
 			glUniformMatrix4fv(tex_model_loc, 1, GL_FALSE, glm::value_ptr(instance));
 			for (const auto &mesh : model.tex_meshes) {
 				glActiveTexture(GL_TEXTURE0);
@@ -651,12 +697,25 @@ render_sim()
 				glBindTexture(GL_TEXTURE_2D, mesh.specular_id);
 				glDrawElements(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, (GLvoid *)(mesh.base_vertex * sizeof(GLuint)));
 			}
-			glUseProgram(g_shaders.notex);
+			glUseProgram(g_shaders.untextured_mesh);
 			glUniformMatrix4fv(notex_model_loc, 1, GL_FALSE, glm::value_ptr(instance));
 			for (const auto &mesh : model.notex_meshes)
 				glDrawElements(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, (GLvoid *)(mesh.base_vertex * sizeof(GLuint)));
 		}
 	}
+}
+
+#define VERTS_PER_GLYPH 6
+
+Glyph
+offset_glyph(Glyph g, float *x, float *y)
+{
+	for (int i = 0; i < VERTS_PER_GLYPH; ++i) {
+		g.vertices[i].position.x += *x;
+		g.vertices[i].position.y += *y;
+	}
+	*x += g.x_advance;
+	return g;
 }
 
 void
@@ -670,28 +729,46 @@ render_ui(const UI_State &ui)
 	glBufferSubData(GL_ARRAY_BUFFER, 0, ui.vertices.size()*sizeof(UI_Vertex), ui.vertices.data());
 	glDrawArrays(GL_TRIANGLES, 0, ui.vertices.size());
 
-	// assume orthographic projection with units = screen pixels, origin at top left
-	/*
-	char t[] = "this is just a test";
-	char *text = t;
-	float x = 0.0f, y = 0.0f;
-	glEnable(GL_TEXTURE_2D);
-	glBindTexture(GL_TEXTURE_2D, font_tex);
-	glBegin(GL_QUADS);
-	while (*text) {
-		if (*text >= 32 && *text < 128) {
-			 stbtt_aligned_quad q;
-			 stbtt_GetBakedQuad(cdata, 512, 512, *text-32, &x, &y, &q, 1); // 1=opengl&d3d10+, 0=d3d9
-			 glTexCoord2f(q.s0,q.t1); glVertex2f(q.x0,q.y0);
-			 glTexCoord2f(q.s1,q.t1); glVertex2f(q.x1,q.y0);
-			 glTexCoord2f(q.s1,q.t0); glVertex2f(q.x1,q.y1);
-			 glTexCoord2f(q.s0,q.t0); glVertex2f(q.x0,q.y1);
-		}
-		++text;
-	}
-	glEnd();
-	*/
+	glDisable(GL_CULL_FACE);
+	glDepthMask(GL_TRUE);
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LEQUAL);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+	char t[] = "the quick brown fox jumped over the lazy dog";
+	float x = 0.0f, y = 10.0f;
+	auto itr = g_font_map.find("Anonymous Pro");
+	assert(itr != g_font_map.end());
+	Font *font = &itr->second;
+
+	font->glyph_buffer.clear();
+	glUseProgram(g_shaders.text);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, font->texture);
+	glBindVertexArray(font->vao);
+	glBindBuffer(GL_ARRAY_BUFFER, font->vbo);
+	for (char *text = t; *text; ++text) {
+/*
+		stbtt_aligned_quad q;
+		stbtt_GetPackedQuad(font->char_data.data(), 512, 512, *text - ' ', &x, &y, &q, 0); // 1=opengl&d3d10+, 0=d3d9
+
+		// TODO: use an index buffer
+		font->glyph_buffer.push_back({ {q.x0, q.y1, 0.0f}, {q.s0, q.t1}});
+		font->glyph_buffer.push_back({ {q.x0, q.y0, 0.0f}, {q.s0, q.t0}});
+		font->glyph_buffer.push_back({ {q.x1, q.y0, 0.0f}, {q.s1, q.t0}});
+
+		font->glyph_buffer.push_back({ {q.x0, q.y1, 0.0f}, {q.s0, q.t1}});
+		font->glyph_buffer.push_back({ {q.x1, q.y0, 0.0f}, {q.s1, q.t0}});
+		font->glyph_buffer.push_back({ {q.x1, q.y1, 0.0f}, {q.s1, q.t1}});
+*/
+		auto gitr = font->glyph_map.find(*text);
+		assert(gitr != font->glyph_map.end());
+		Glyph ofs_glyph = offset_glyph(gitr->second, &x, &y);
+		font->glyph_buffer.insert(font->glyph_buffer.end(), ofs_glyph.vertices, ofs_glyph.vertices + VERTS_PER_GLYPH);
+	}
+	glBufferSubData(GL_ARRAY_BUFFER, 0, font->glyph_buffer.size()*sizeof(Glyph_Vertex), font->glyph_buffer.data());
+	glDrawArrays(GL_TRIANGLES, 0, font->glyph_buffer.size());
 }
 
 void
@@ -699,8 +776,8 @@ render_quit()
 {
 	glBindVertexArray(0);
 	glUseProgram(0);
-	glDeleteProgram(g_shaders.tex);
-	glDeleteProgram(g_shaders.notex);
+	glDeleteProgram(g_shaders.textured_mesh);
+	glDeleteProgram(g_shaders.untextured_mesh);
 	glDeleteProgram(g_shaders.ui);
 	for (const auto &model : g_models) {
 		glDeleteVertexArrays(1, &model.vao);
