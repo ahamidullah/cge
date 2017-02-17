@@ -12,14 +12,8 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
-
-#define STB_RECT_PACK_IMPLEMENTATION
-#define STB_TRUETYPE_IMPLEMENTATION
-#pragma GCC diagnostic push 
-#pragma GCC diagnostic ignored "-Wunused-function"
-#pragma GCC diagnostic ignored "-Wfloat-equal"
-#include "stb_truetype.h"
-#pragma GCC diagnostic pop
+#include <ft2build.h>
+#include FT_FREETYPE_H  
 
 #include "render.h"
 
@@ -117,18 +111,18 @@ struct Glyph_Vertex {
 	Vec2f uv;
 };
 
-struct Glyph {
-	Glyph_Vertex vertices[6];
-	float x_advance;
+struct Glyph_Info {
+	Glyph_Vertex canonical_vertices[6];
+	//Vec2i bearing;
+	float advance;
 };
 
 struct Font {
 	GLuint vao;
 	GLuint vbo;
 	GLuint texture;
-	std::vector<Glyph_Vertex> glyph_buffer;
-	//std::vector<stbtt_packedchar> char_data;
-	std::unordered_map<char, Glyph> glyph_map;
+	std::vector<Glyph_Vertex> vertices;
+	std::unordered_map<char, Glyph_Info> glyph_map;
 };
 
 struct Ubo_Ids {
@@ -321,7 +315,7 @@ make_gpu_program(const std::string &vert_src, const std::string &frag_src, const
 	return program;
 }
 
-std::optional<GLuint>
+static std::optional<GLuint>
 get_texture(std::string path, GLuint gl_tex_unit)
 {
 	auto it = g_tex_map.find(path);
@@ -357,7 +351,7 @@ get_texture(std::string path, GLuint gl_tex_unit)
 #define GET_BASE_NAME(path) path.substr(path.find_last_of('/')+1, path.find_last_of('.') - (path.find_last_of('/')+1))
 
 // Loading is all temp so don't really care if it's slow
-void
+static void
 load_models()
 {
 	std::vector<std::string> paths = {
@@ -402,7 +396,6 @@ load_models()
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_ids[i]);
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm.indices.size()*sizeof(GLuint), rm.indices.data(), GL_STATIC_DRAW);
 
-		//size_t start = paths[i].find_last_of('/')+1, end = paths[i].find_last_of('.');
 		g_models.emplace_back(vao_ids[i], vbo_ids[i]);
 		g_model_map[GET_BASE_NAME(paths[i])] = g_models.size()-1;
 		printf("loaded model %s\n", GET_BASE_NAME(paths[i]).c_str());
@@ -439,6 +432,107 @@ load_models()
 	glBindVertexArray(0);
 }
 
+// Font texture packing.
+struct Pack_Node {
+	Vec2u available;
+	Vec2s upper_left;
+	Pack_Node *l, *r;
+};
+
+#define IS_LEAF(n) (n->l == NULL && n->r == NULL)
+
+static void
+blit_glyph(const FT_Bitmap &bm, const Vec2s upper_left, const size_t row_len, unsigned char *buf)
+{
+	for (size_t i = 0, buf_row = upper_left.y; i < bm.rows; ++i, ++buf_row)
+		for (size_t j = 0, buf_col = upper_left.x; j < (unsigned)std::abs(bm.pitch); ++j, ++buf_col)
+			buf[buf_row*row_len+buf_col] = bm.buffer[i*bm.pitch+j];
+}
+
+static std::optional<Vec2s>
+find_space(Pack_Node *n, Vec2u wanted)
+{
+	if (IS_LEAF(n) && wanted.x <= n->available.x && wanted.y <= n->available.y) {
+		Pack_Node *l_node = (Pack_Node *)malloc(sizeof(Pack_Node));
+		Pack_Node *r_node = (Pack_Node *)malloc(sizeof(Pack_Node));
+		// We always allocate the requested block in the upper left of the node's available space.
+		// How should we split the rest of the space in the node? Simple heuristic is just split vertically if the space requested is
+		// longer than it is wide, otherwise split horizontally.
+		// The left node is always the split part adjacent to the allocated block (to the right when split horizontally and below
+		// when split vertically). Nodes with a zero dimension are possible and are ignored.
+		if (wanted.y >= wanted.x) { // vertical split
+			l_node->available = {wanted.x, n->available.y - wanted.y};
+			r_node->available = {n->available.x - wanted.x, n->available.y};
+			l_node->upper_left = {n->upper_left.x, n->upper_left.y + wanted.y};
+			r_node->upper_left = {n->upper_left.x + wanted.x, n->upper_left.y};
+		} else { // horizontal split
+			l_node->available = {n->available.x - wanted.x, wanted.y};
+			r_node->available = {n->available.x, n->available.y - wanted.y};
+			l_node->upper_left = {n->upper_left.x + wanted.x, n->upper_left.y};
+			r_node->upper_left = {n->upper_left.x, n->upper_left.y + wanted.y};
+		}
+		l_node->l = l_node->r = r_node->l = r_node->r = NULL;
+		n->l = l_node;
+		n->r = r_node;
+		return n->upper_left; // where we should start the blit
+	}
+	if (IS_LEAF(n))
+		return {};
+	std::optional<Vec2s> l = find_space(n->l, wanted); 
+	if (l)
+		return l;
+	return find_space(n->r, wanted);
+}
+
+static void
+free_pack_tree()
+{
+
+}
+
+static void
+pack_font(const FT_Library &ft, const char *font_path, const Vec2u tex_dim, const Vec2f screen_scale, std::unordered_map<char, Glyph_Info> &glyph_map, unsigned char *buf)
+{
+	FT_Face face;
+	if (FT_New_Face(ft, font_path, 0, &face))
+		zabort("failed to load font arial");
+	FT_Set_Pixel_Sizes(face, 0, 24);
+
+	Pack_Node root = { tex_dim, {0, 0}, NULL, NULL };
+	for (unsigned char c = 0; c < 128; ++c) {
+		if (FT_Load_Char(face, c, FT_LOAD_RENDER)) {
+			zerror("FreeType failed to load character %c", c);
+			continue;
+		}
+		std::optional<Vec2s> tex_upper_left = find_space(&root, {(unsigned)std::abs(face->glyph->bitmap.pitch), face->glyph->bitmap.rows});
+		if (!tex_upper_left) {
+			zerror("failed to pack font");
+			free_pack_tree();
+			return;
+		}
+		blit_glyph(face->glyph->bitmap, *tex_upper_left, tex_dim.x, buf);
+
+		Glyph_Info *g = &glyph_map[c];
+		float x0 = face->glyph->bitmap_left * screen_scale.x;
+		float x1 = x0 + (face->glyph->bitmap.width * screen_scale.x);
+		float y0 = (face->glyph->bitmap.rows - face->glyph->bitmap_top) * screen_scale.y;
+		float y1 = y0 - (face->glyph->bitmap.rows * screen_scale.y);
+		float u0 = (float)tex_upper_left->x / tex_dim.x;
+		float u1 = ((float)tex_upper_left->x + face->glyph->bitmap.width) / tex_dim.x;
+		float v0 = ((float)tex_upper_left->y + face->glyph->bitmap.rows) / tex_dim.y;
+		float v1 = (float)tex_upper_left->y / tex_dim.y;
+		g->canonical_vertices[0] = { {x0, y1, 0.0f}, {u0, v1}};
+		g->canonical_vertices[1] = { {x0, y0, 0.0f}, {u0, v0}};
+		g->canonical_vertices[2] = { {x1, y0, 0.0f}, {u1, v0}};
+		g->canonical_vertices[3] = { {x0, y1, 0.0f}, {u0, v1}};
+		g->canonical_vertices[4] = { {x1, y0, 0.0f}, {u1, v0}};
+		g->canonical_vertices[5] = { {x1, y1, 0.0f}, {u1, v1}};
+		g->advance = (face->glyph->advance.x >> 6) * screen_scale.x; // FreeType stores advance in 1/64th pixels.
+	}
+	FT_Done_Face(face);
+}
+
+// Init.
 void
 render_init(const Camera &cam, const Vec2i &screen_dim)
 {
@@ -549,74 +643,41 @@ render_init(const Camera &cam, const Vec2i &screen_dim)
 
 	// load fonts
 	{
-		std::vector<std::string> font_paths = {
-			"fonts/Anonymous Pro.ttf"
-		};
-		// TODO: use index buffer for font vertices
-		unsigned char atlas_buf[512*512]; // temp
-		unsigned char ttf_buf[1<<20]; // temp
-		for (auto fp : font_paths) {
-			glUseProgram(g_shaders.text);
-			char first_char = ' ', last_char = '~';
+		// TODO: handle proper utf8
+		FT_Library ft;
+		if (FT_Init_FreeType(&ft))
+			zabort("could not init freetype lib");
+		Font *font = &g_font_map["arial"];
 
-			// rasterize the font
-			fread(ttf_buf, 1, 1<<20, fopen(fp.c_str(), "rb"));
-			Font *font = &g_font_map[GET_BASE_NAME(fp)];
-			//font->char_data.resize(last_char - first_char);
-			stbtt_packedchar char_data[last_char - first_char];
-			stbtt_pack_context context;
-			if (!stbtt_PackBegin(&context, atlas_buf, 512, 512, 0, 1, NULL))
-				zabort("Failed to initialize font %s", fp.c_str());
-			stbtt_PackSetOversampling(&context, 2, 2);
-			if (!stbtt_PackFontRange(&context, ttf_buf, 0, 32, first_char, last_char - first_char, char_data))
-				zabort("Failed to pack font %s", fp.c_str());
-			stbtt_PackEnd(&context);
+		unsigned char tex_buf[512*512];
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		pack_font(ft, "fonts/arial.ttf", {512, 512}, {100.0f/screen_dim.x, 100.0f/screen_dim.y}, font->glyph_map, tex_buf);
 
-			glGenTextures(1, &font->texture);
-			glBindTexture(GL_TEXTURE_2D, font->texture);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 512, 512, 0, GL_RED, GL_UNSIGNED_BYTE, atlas_buf);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST_MIPMAP_NEAREST);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, 8);
-			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-			glHint(GL_GENERATE_MIPMAP_HINT, GL_NICEST);
-			glGenerateMipmap(GL_TEXTURE_2D);
+		glGenTextures(1, &font->texture);
+		glBindTexture(GL_TEXTURE_2D, font->texture);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 512, 512, 0, GL_RED, GL_UNSIGNED_BYTE, tex_buf);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-			glGenVertexArrays(1, &font->vao);
-			glGenBuffers(1, &font->vbo);
+		glGenVertexArrays(1, &font->vao);
+		glGenBuffers(1, &font->vbo);
 
-			glBindVertexArray(font->vao);
-			glBindBuffer(GL_ARRAY_BUFFER, font->vbo);
-			glBufferData(GL_ARRAY_BUFFER, MAX_TEXT_VERTICES*sizeof(Glyph_Vertex), NULL, GL_STATIC_DRAW);
+		glBindVertexArray(font->vao);
+		glBindBuffer(GL_ARRAY_BUFFER, font->vbo);
+		glBufferData(GL_ARRAY_BUFFER, MAX_TEXT_VERTICES*sizeof(Glyph_Vertex), NULL, GL_DYNAMIC_DRAW);
 
-			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Glyph_Vertex), (GLvoid *)offsetof(Glyph_Vertex, position));
-			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Glyph_Vertex), (GLvoid *)offsetof(Glyph_Vertex, uv));
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Glyph_Vertex), (GLvoid *)offsetof(Glyph_Vertex, position));
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Glyph_Vertex), (GLvoid *)offsetof(Glyph_Vertex, uv));
 
-			glEnableVertexAttribArray(0);
-			glEnableVertexAttribArray(1);
+		glEnableVertexAttribArray(0);
+		glEnableVertexAttribArray(1);
 
-			glUniform1i(glGetUniformLocation(g_shaders.text, "u_texture"), 0);
+		glUseProgram(g_shaders.text);
+		glUniform1i(glGetUniformLocation(g_shaders.text, "u_texture"), 0);
 
-			// stbtt gives us positions in screen space, but our ortho projection is from 0.0f to 100.0f, so we have to normalize
-			float scale_x = 100.0f / screen_dim.x, scale_y = 100.0f / screen_dim.y; 
-			stbtt_aligned_quad q;
-			for (char ch = first_char; ch <= last_char; ++ch) {
-				float x = 0.0f, y = 0.0f;
-				float x_advance = stbtt_GetPackedQuad(char_data, 512, 512, ch - first_char, &x, &y, &q, 0);
-
-				Glyph *g = &font->glyph_map[ch];
-				// TODO: use an index buffer
-				g->vertices[0] = { {q.x0*scale_x, q.y1*scale_y, 0.0f}, {q.s0, q.t1}};
-				g->vertices[1] = { {q.x0*scale_x, q.y0*scale_y, 0.0f}, {q.s0, q.t0}};
-				g->vertices[2] = { {q.x1*scale_x, q.y0*scale_y, 0.0f}, {q.s1, q.t0}};
-				g->vertices[3] = { {q.x0*scale_x, q.y1*scale_y, 0.0f}, {q.s0, q.t1}};
-				g->vertices[4] = { {q.x1*scale_x, q.y0*scale_y, 0.0f}, {q.s1, q.t0}};
-				g->vertices[5] = { {q.x1*scale_x, q.y1*scale_y, 0.0f}, {q.s1, q.t1}};
-				g->x_advance = x_advance*scale_x;
-			}
-		}
+		FT_Done_FreeType(ft);
 	}
 
 	load_models();
@@ -707,68 +768,55 @@ render_sim()
 
 #define VERTS_PER_GLYPH 6
 
-Glyph
-offset_glyph(Glyph g, float *x, float *y)
+
+static Glyph_Info
+offset_glyph(Glyph_Info g, float *x, float *y)
 {
 	for (int i = 0; i < VERTS_PER_GLYPH; ++i) {
-		g.vertices[i].position.x += *x;
-		g.vertices[i].position.y += *y;
+		g.canonical_vertices[i].position.x += *x;
+		g.canonical_vertices[i].position.y += *y;
 	}
-	*x += g.x_advance;
+	*x += g.advance;
 	return g;
 }
+
 
 void
 render_ui(const UI_State &ui)
 {
 	glClear(GL_DEPTH_BUFFER_BIT);
-	assert(ui.vertices.size() <= MAX_UI_VERTICES);
+	/*assert(ui.vertices.size() <= MAX_UI_VERTICES);
 	glUseProgram(g_shaders.ui);
 	glBindVertexArray(g_ui_render_info.vao);
 	glBindBuffer(GL_ARRAY_BUFFER, g_ui_render_info.vbo);
 	glBufferSubData(GL_ARRAY_BUFFER, 0, ui.vertices.size()*sizeof(UI_Vertex), ui.vertices.data());
 	glDrawArrays(GL_TRIANGLES, 0, ui.vertices.size());
+*/
 
 	glDisable(GL_CULL_FACE);
-	glDepthMask(GL_TRUE);
-	glEnable(GL_DEPTH_TEST);
-	glDepthFunc(GL_LEQUAL);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	char t[] = "the quick brown fox jumped over the lazy dog";
 	float x = 0.0f, y = 10.0f;
-	auto itr = g_font_map.find("Anonymous Pro");
+	auto itr = g_font_map.find("arial");
 	assert(itr != g_font_map.end());
 	Font *font = &itr->second;
 
-	font->glyph_buffer.clear();
+	font->vertices.clear();
 	glUseProgram(g_shaders.text);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, font->texture);
 	glBindVertexArray(font->vao);
 	glBindBuffer(GL_ARRAY_BUFFER, font->vbo);
 	for (char *text = t; *text; ++text) {
-/*
-		stbtt_aligned_quad q;
-		stbtt_GetPackedQuad(font->char_data.data(), 512, 512, *text - ' ', &x, &y, &q, 0); // 1=opengl&d3d10+, 0=d3d9
-
-		// TODO: use an index buffer
-		font->glyph_buffer.push_back({ {q.x0, q.y1, 0.0f}, {q.s0, q.t1}});
-		font->glyph_buffer.push_back({ {q.x0, q.y0, 0.0f}, {q.s0, q.t0}});
-		font->glyph_buffer.push_back({ {q.x1, q.y0, 0.0f}, {q.s1, q.t0}});
-
-		font->glyph_buffer.push_back({ {q.x0, q.y1, 0.0f}, {q.s0, q.t1}});
-		font->glyph_buffer.push_back({ {q.x1, q.y0, 0.0f}, {q.s1, q.t0}});
-		font->glyph_buffer.push_back({ {q.x1, q.y1, 0.0f}, {q.s1, q.t1}});
-*/
 		auto gitr = font->glyph_map.find(*text);
 		assert(gitr != font->glyph_map.end());
-		Glyph ofs_glyph = offset_glyph(gitr->second, &x, &y);
-		font->glyph_buffer.insert(font->glyph_buffer.end(), ofs_glyph.vertices, ofs_glyph.vertices + VERTS_PER_GLYPH);
+		Glyph_Info ofs_glyph = offset_glyph(gitr->second, &x, &y);
+		font->vertices.insert(font->vertices.end(), ofs_glyph.canonical_vertices, ofs_glyph.canonical_vertices + VERTS_PER_GLYPH);
 	}
-	glBufferSubData(GL_ARRAY_BUFFER, 0, font->glyph_buffer.size()*sizeof(Glyph_Vertex), font->glyph_buffer.data());
-	glDrawArrays(GL_TRIANGLES, 0, font->glyph_buffer.size());
+	glBufferSubData(GL_ARRAY_BUFFER, 0, font->vertices.size()*sizeof(Glyph_Vertex), font->vertices.data());
+	glDrawArrays(GL_TRIANGLES, 0, font->vertices.size());
 }
 
 void

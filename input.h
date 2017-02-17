@@ -13,6 +13,16 @@ enum struct Program_State {
 	exit
 };
 
+struct Vec2s {
+	size_t x;
+	size_t y;
+};
+
+struct Vec2u {
+	unsigned x;
+	unsigned y;
+};
+
 struct Vec2i {
 	int x;
 	int y;

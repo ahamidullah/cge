@@ -118,7 +118,7 @@ main()
 	Keyboard kb = { {0}, {0} };
 	Camera cam = { 0.0f, 0.0f, 1.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 45.0f, 0.1f, 100.0f };
 	Mouse mouse = { {400, 300}, {400, 300}, 0.1f, 0 };
-	Vec2i screen_dim = { 1000, 800 };
+	Vec2i screen_dim = { 800, 600 };
 	UI_State ui;
 	SDL_Window *window;
 	SDL_GLContext context;
