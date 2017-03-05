@@ -1,25 +1,58 @@
+/*
 #include <stdio.h>
 #include <GL/glew.h>
 #include <assert.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
-#define GLM_SWIZZLE
-#include <glm/gtc/type_ptr.hpp>
 #include <stdint.h>
 #include <stddef.h>
+
+#include "render.h"
+*/
+
 #include <vector>
 #include <unordered_map>
+#include <string>
+#define GLM_SWIZZLE
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H  
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
 
-#include "render.h"
+#include <experimental/optional>
+
+namespace std {
+	using std::experimental::optional;
+	using std::experimental::make_optional;
+	using std::experimental::nullopt;
+}
 
 constexpr int MAX_PT_LIGHTS = 4;
 constexpr int MAX_UI_VERTICES = 100;
-constexpr int MAX_TEXT_VERTICES = 1000;
+constexpr int MAX_GLYPH_VERTICES = 1000;
+
+struct Render_Id {
+	size_t model_ind;
+	size_t instance_ind;
+};
+
+struct Camera {
+	float pitch;
+	float yaw;
+	float speed;
+	glm::vec3 pos;
+	glm::vec3 front;
+	glm::vec3 up;
+
+	float fov;
+	float near;
+	float far;
+};
 
 struct Untextured_Mesh {
 	Untextured_Mesh(GLuint ni, GLuint bv) : num_indices(ni), base_vertex(bv) {}
@@ -37,11 +70,17 @@ struct Textured_Mesh {
 
 struct Model {
 	Model(GLuint pvao, GLuint pvbo) : vao(pvao), vbo(pvbo) {}
-	GLuint                       vao;
-	GLuint                       vbo;
+	GLuint vao;
+	GLuint vbo;
 	std::vector<Textured_Mesh>   tex_meshes;
 	std::vector<Untextured_Mesh> notex_meshes;
 	std::vector<glm::mat4>       instances;
+};
+
+struct Model_Vertex {
+	GLfloat position[3];
+	GLfloat normal[3];
+	GLfloat uv[2];
 };
 
 struct Dir_Light {
@@ -64,12 +103,6 @@ struct Spot_Light {
 	float constant;
 	float linear;
 	float quadratic;
-};
-
-struct Model_Vertex {
-	GLfloat position[3];
-	GLfloat normal[3];
-	GLfloat uv[2];
 };
 
 struct Point_Light {    
@@ -113,15 +146,15 @@ struct Glyph_Vertex {
 
 struct Glyph_Info {
 	Glyph_Vertex canonical_vertices[6];
-	//Vec2i bearing;
 	float advance;
 };
 
-struct Font {
+struct Font_Info {
 	GLuint vao;
 	GLuint vbo;
 	GLuint texture;
-	std::vector<Glyph_Vertex> vertices;
+	//std::vector<Glyph_Vertex> vertices;
+	Array<Glyph_Vertex> vertices;
 	std::unordered_map<char, Glyph_Info> glyph_map;
 };
 
@@ -130,6 +163,7 @@ struct Ubo_Ids {
 	GLuint lights;
 };
 
+/*
 struct Raw_Mesh_Info {
 	Raw_Mesh_Info(GLuint ni, GLuint bv, std::optional<std::string> dp, std::optional<std::string> sp) : num_indices(ni), base_vertex(bv), diffuse_path(dp), specular_path(sp) {}
 	GLuint num_indices;
@@ -143,6 +177,7 @@ struct Raw_Model {
 	std::vector<Model_Vertex> vertices;
 	std::vector<GLuint> indices;
 };
+*/
 
 struct Shader_Ids {
 	GLuint textured_mesh;
@@ -151,15 +186,71 @@ struct Shader_Ids {
 	GLuint text;
 };
 
+struct Model_Asset {
+	GLuint vao;
+	GLuint vbo;
+	GLuint num_meshes;
+	Textured_Mesh meshes[0]; // Struct hack -- is "meshes[1]" better?
+};
+
+struct Model_Instance {
+	glm::mat4 pos;
+};
+
+struct Model_Table {
+	Memory_Arena model_data;
+	Memory_Arena mesh_textures;
+};
+
+struct Loaded_Assets {
+	Model_Table models;
+};
+
+struct Model_Instance_Table {
+	//Model_Instance *table[NUM_NODEL_IDS];
+	Memory_Arena instance_lists[NUM_MODEL_IDS];
+};
+
+inline Loaded_Assets
+init_assets()
+{
+	Loaded_Assets la;
+	la.models.model_data = mem_make_arena();
+	la.models.mesh_textures = mem_make_arena();
+	return la;
+}
+
+inline Model_Instance_Table
+init_model_instances()
+{
+	Model_Instance_Table mit;
+	for (int i = 0; i < NUM_MODEL_IDS; ++i) {
+		mit.instance_lists[i] = mem_make_arena();
+	}
+	return mit;
+}
+
+void *asset_lookup_table[NUM_ASSET_IDS] = {};
+Loaded_Assets g_assets = init_assets();
+
+// TODO: Probably better to create one list of model instances. Each instance keeps its Model_ID and we just sort the list once when we start rendering.
+Memory_Arena g_model_instances[NUM_MODEL_IDS];
+
 static std::unordered_map<std::string, size_t> g_model_map;
 static std::unordered_map<std::string, GLuint> g_tex_map;
-static std::unordered_map<std::string, Font> g_font_map;
+static std::unordered_map<std::string, Font_Info> g_font_map;
 static std::vector<Model> g_models;
 static Shader_Ids g_shaders;
 static Lights g_lights;
 static Matrices g_matrices;
 static Ubo_Ids g_ubos;
 static UI_Render_Info g_ui_render_info;
+
+uint64_t
+get_tex_asset_id(uint64_t mtex_table_id)
+{
+	return NUM_ASSET_IDS + mtex_table_id;
+}
 
 std::optional<glm::vec3>
 raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Vec2i &screen_dim)
@@ -180,6 +271,7 @@ raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const 
 	return pos;
 }
 
+/*
 void
 mk_point_light(glm::vec3 pos)
 {
@@ -202,8 +294,10 @@ mk_point_light(glm::vec3 pos)
 	}
 	zerror("Max point lights reached!");
 }
+*/
 
 
+/*
 static void
 process_node(aiNode* node, const aiScene* scene, Raw_Model *rm)
 {
@@ -242,7 +336,7 @@ process_node(aiNode* node, const aiScene* scene, Raw_Model *rm)
 		aiMaterial* mat = scene->mMaterials[mesh->mMaterialIndex];
 		aiString diffuse_path, specular_path;
 		aiReturn has_diffuse = mat->GetTexture(aiTextureType_DIFFUSE, 0, &diffuse_path);
-		aiReturn has_specular = mat->GetTexture(aiTextureType_DIFFUSE, 0, &specular_path);
+		aiReturn has_specular = mat->GetTexture(aiTextureType_SPECULAR, 0, &specular_path);
 		if (has_diffuse == AI_SUCCESS && has_specular == AI_SUCCESS)
 			rm->raw_mesh_infos.emplace_back(num_mesh_inds, base_vertex, diffuse_path.C_Str(), specular_path.C_Str());
 		else if (has_diffuse == AI_SUCCESS)
@@ -255,6 +349,7 @@ process_node(aiNode* node, const aiScene* scene, Raw_Model *rm)
 	for (unsigned i = 0; i < node->mNumChildren; ++i)
 		process_node(node->mChildren[i], scene, rm);
 }
+*/
 
 #define GL_CHECK_ERR(obj, ivfn, objparam, infofn, fmt, ...)\
 {\
@@ -274,11 +369,11 @@ process_node(aiNode* node, const aiScene* scene, Raw_Model *rm)
 }
 
 static GLuint
-compile_shader(const GLenum type, const std::string &src, const char *defines)
+compile_shader(const GLenum type, const char *src, const char *defines)
 {
 	const GLuint id = glCreateShader(type);
-	const char *src_strs[] = { "#version 330\n", defines, src.c_str() };
-	glShaderSource(id, sizeof(src_strs)/sizeof(src_strs[0]), src_strs, NULL);
+	const char *src_strs[] = { "#version 330\n", defines, src };
+	glShaderSource(id, ARR_LEN(src_strs), src_strs, NULL);
 	glCompileShader(id);
 
 	const char *type_str;
@@ -295,7 +390,7 @@ compile_shader(const GLenum type, const std::string &src, const char *defines)
 }
 
 static GLuint
-make_gpu_program(const std::string &vert_src, const std::string &frag_src, const char *defines)
+make_gpu_program(const char *vert_src, const char *frag_src, const char *defines)
 {
 	GLuint vert_id = compile_shader(GL_VERTEX_SHADER, vert_src, defines);
 	GLuint frag_id = compile_shader(GL_FRAGMENT_SHADER, frag_src, defines);
@@ -348,90 +443,208 @@ get_texture(std::string path, GLuint gl_tex_unit)
 	return tex_id;
 }
 
+static GLuint
+get_tex_id(uint64_t mtex_table_id, GLuint gl_tex_unit)
+{
+	if (mtex_table_id == (uint64_t) -1)
+		return 0;
+
+	GLuint tex_id;
+	glGenTextures(1, &tex_id);
+	glActiveTexture(gl_tex_unit);
+	Asset_File_Header af_header;
+	File_Handle af_handle = platform_open_file("assets.ahh", "");
+	DEFER(platform_close_file(af_handle));
+	platform_read(af_handle, sizeof(Asset_File_Header), &af_header);
+	uint64_t af_tex_offset;
+	platform_file_seek(af_handle, af_header.mesh_texture_table_offset + sizeof(uint64_t)*mtex_table_id);
+	platform_read(af_handle, sizeof(uint64_t), &af_tex_offset);
+	platform_file_seek(af_handle, af_tex_offset);
+	uint8_t bytes_per_pixel;
+	int w, h, pitch;
+	platform_read(af_handle, sizeof(bytes_per_pixel), &bytes_per_pixel);
+	platform_read(af_handle, sizeof(w), &w);
+	platform_read(af_handle, sizeof(h), &h);
+	platform_read(af_handle, sizeof(pitch), &pitch);
+	size_t nbytes = h * pitch;
+	char *pixels = (char *)malloc(nbytes);
+	printf("nbytes %d\n", nbytes);
+	platform_read(af_handle, nbytes, pixels);
+	GLint format = bytes_per_pixel == 4 ? GL_RGBA : GL_RGB;
+	glBindTexture(GL_TEXTURE_2D, tex_id);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, format, GL_UNSIGNED_BYTE, pixels);
+	glGenerateMipmap(GL_TEXTURE_2D);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	free(pixels);
+
+	return tex_id;
+}
+
 #define GET_BASE_NAME(path) path.substr(path.find_last_of('/')+1, path.find_last_of('.') - (path.find_last_of('/')+1))
 
-// Loading is all temp so don't really care if it's slow
-static void
-load_models()
+Model_Asset *
+load_model_from_disk(Model_ID id)
 {
-	std::vector<std::string> paths = {
-		"models/nanosuit.obj",
-	};
-	int num_files = paths.size();
+	// TODO: store this header instead of reading it in everytime.
+	Asset_File_Header af_header;
+	File_Handle af_handle = platform_open_file("assets.ahh", "");
+	DEFER(platform_close_file(af_handle));
+	platform_read(af_handle, sizeof(Asset_File_Header), &af_header);
 
+/*
 	std::vector<GLuint> vao_ids;
 	std::vector<GLuint> vbo_ids;
 	std::vector<GLuint> ebo_ids;
 
-	vao_ids.resize(num_files);
-	vbo_ids.resize(num_files);
-	ebo_ids.resize(num_files);
+	vao_ids.resize(NUM_ASSET_IDS);
+	vbo_ids.resize(NUM_ASSET_IDS);
+	ebo_ids.resize(NUM_ASSET_IDS);
+*/
 
-	glGenVertexArrays(num_files, vao_ids.data());
-	glGenBuffers(num_files, vbo_ids.data());
-	glGenBuffers(num_files, ebo_ids.data());
+	//Model_Asset *model = 
+	// TODO: Worth it to load these up front?
+	/*
+	glGenVertexArrays(NUM_ASSET_IDS, vao_ids.data());
+	glGenBuffers(NUM_ASSET_IDS, vbo_ids.data());
+	glGenBuffers(NUM_ASSET_IDS, ebo_ids.data());
+	*/
 
-	Raw_Model rm;
-	for (int i = 0; i < num_files; ++i) {
-		Assimp::Importer import;
-		const aiScene* scene = import.ReadFile(paths[i], aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_JoinIdenticalVertices);
-		if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-			zerror("Assimp error: %s", import.GetErrorString());
+	//std::string paths[] = { "assets/models/nanosuit.obj" };
+	Memory_Arena load_arena = mem_make_arena();
+	uint64_t af_model_ofs, num_verts, num_indices, num_meshes; 
+	//for (int i = 0; i < NUM_ASSET_IDS; ++i) {
+	platform_file_seek(af_handle, af_header.asset_offsets[id]);
+	platform_read(af_handle, sizeof(uint64_t), &num_verts);
+	float *vert_buf = mem_alloc_array(float, num_verts, &load_arena);
+	platform_read(af_handle, sizeof(uint64_t), &num_indices);
+	unsigned *ind_buf = mem_alloc_array(unsigned, num_indices, &load_arena);
+	platform_read(af_handle, sizeof(Model_Vertex)*num_verts, vert_buf);
+	platform_read(af_handle, sizeof(GLuint)*num_indices, ind_buf);
+	platform_read(af_handle, sizeof(uint64_t), &num_meshes);
+
+	Model_Asset *model = (Model_Asset *)mem_push(sizeof(Model_Asset) + (sizeof(Textured_Mesh)*num_meshes), &g_assets.models.model_data);
+	model->num_meshes = num_meshes;
+
+	for (int i = 0; i < num_meshes; ++i) {
+		// TODO: Should these be 32 bit or 64 bit?
+		//uint64_t mesh_num_indices, mesh_base_vert, diffuse_asset_id, specular_asset_id;
+		uint64_t diffuse_asset_id, specular_asset_id;
+		platform_read(af_handle, sizeof(uint64_t), &model->meshes[i].num_indices);
+		platform_read(af_handle, sizeof(uint64_t), &model->meshes[i].base_vertex);
+		platform_read(af_handle, sizeof(uint64_t), &specular_asset_id);
+		platform_read(af_handle, sizeof(uint64_t), &diffuse_asset_id);
+		model->meshes[i].specular_id = get_tex_id(specular_asset_id, GL_TEXTURE1);
+		model->meshes[i].diffuse_id = get_tex_id(diffuse_asset_id, GL_TEXTURE0);
+/*
+		if (diffuse_asset_id == (uint64_t)-1) {
+			g_models.back().notex_meshes.emplace_back(mesh_num_indices, mesh_base_vert);
 			continue;
 		}
-		process_node(scene->mRootNode, scene, &rm);
+		// We use texture target zero if we can't get a specular texture, which opengl says is "the default texture" in that texture unit.
+		// Is that ok? (I think so).
+		g_models.back().tex_meshes.emplace_back(mesh_num_indices, mesh_base_vert, get_tex_id(diffuse_asset_id, GL_TEXTURE0), get_tex_id(specular_asset_id, GL_TEXTURE1));
+*/
+	}
 
-		glBindVertexArray(vao_ids[i]);
-		glBindBuffer(GL_ARRAY_BUFFER, vbo_ids[i]);
-		glBufferData(GL_ARRAY_BUFFER, rm.vertices.size()*sizeof(Model_Vertex), rm.vertices.data(), GL_STATIC_DRAW);
+	GLuint ebo;
+	glGenVertexArrays(1, &model->vao);
+	glGenBuffers(1, &model->vbo);
+	glGenBuffers(1, &ebo);
+	glBindVertexArray(model->vao);
+	glBindBuffer(GL_ARRAY_BUFFER, model->vbo);
+	glBufferData(GL_ARRAY_BUFFER, num_verts*sizeof(Model_Vertex), vert_buf, GL_STATIC_DRAW);
 
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)0);
-		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)(sizeof(GLfloat)*3));
-		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid*)(sizeof(GLfloat)*6));
+	// TODO: Change these to offsetof()s.
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)0);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)(sizeof(GLfloat)*3));
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid*)(sizeof(GLfloat)*6));
 
-		glEnableVertexAttribArray(0);
-		glEnableVertexAttribArray(1);
-		glEnableVertexAttribArray(2);
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(2);
 
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_ids[i]);
-		glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm.indices.size()*sizeof(GLuint), rm.indices.data(), GL_STATIC_DRAW);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, num_indices*sizeof(GLuint), ind_buf, GL_STATIC_DRAW);
 
-		g_models.emplace_back(vao_ids[i], vbo_ids[i]);
-		g_model_map[GET_BASE_NAME(paths[i])] = g_models.size()-1;
-		printf("loaded model %s\n", GET_BASE_NAME(paths[i]).c_str());
+/*
+	Assimp::Importer import;
+	const aiScene* scene = import.ReadFile(paths[i], aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_JoinIdenticalVertices);
+	if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
+		zerror("Assimp error: %s", import.GetErrorString());
+		continue;
+	}
+	process_node(scene->mRootNode, scene, &rm);
 
-		for (const auto &rmi : rm.raw_mesh_infos) {
-			if (!rmi.diffuse_path) {
-				g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
-				continue;
-			}
+	glBindVertexArray(vao_ids[i]);
+	glBindBuffer(GL_ARRAY_BUFFER, vbo_ids[i]);
+	glBufferData(GL_ARRAY_BUFFER, rm.vertices.size()*sizeof(Model_Vertex), rm.vertices.data(), GL_STATIC_DRAW);
 
-			// We use texture target zero if we can't get a specular texture, which opengl says is "the default texture" in that texture unit.
-			// Is that ok? (I think so).
-			std::optional<GLuint> spec_id = 0;
-			if (rmi.specular_path) {
-				spec_id = get_texture(*rmi.specular_path, GL_TEXTURE1);
-				if (!spec_id) {
-					zerror("could not find texture %s from model file %s", rmi.specular_path->c_str(), paths[i].c_str());
-					spec_id = 0;
-				}
-			}
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)0);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)(sizeof(GLfloat)*3));
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid*)(sizeof(GLfloat)*6));
 
-			std::optional<GLuint> diff_id = get_texture(*rmi.diffuse_path, GL_TEXTURE0);
-			if (diff_id)
-				g_models.back().tex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex, *diff_id, *spec_id);
-			else {
-				zerror("could not find texture %s from model file %s", rmi.diffuse_path->c_str(), paths[i].c_str());
-				g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(2);
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_ids[i]);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm.indices.size()*sizeof(GLuint), rm.indices.data(), GL_STATIC_DRAW);
+
+	g_models.emplace_back(vao_ids[i], vbo_ids[i]);
+	g_model_map[GET_BASE_NAME(paths[i])] = g_models.size()-1;
+	printf("loaded model %s\n", GET_BASE_NAME(paths[i]).c_str());
+
+	for (const auto &rmi : rm.raw_mesh_infos) {
+		if (!rmi.diffuse_path) {
+			g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
+			continue;
+		}
+
+		// We use texture target zero if we can't get a specular texture, which opengl says is "the default texture" in that texture unit.
+		// Is that ok? (I think so).
+		//g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
+		std::optional<GLuint> spec_id = 0;
+		if (rmi.specular_path) {
+			spec_id = get_texture(*rmi.specular_path, GL_TEXTURE1);
+			if (!spec_id) {
+				zerror("could not find texture %s from model file %s", rmi.specular_path->c_str(), paths[i].c_str());
+				spec_id = 0;
 			}
 		}
-		rm.vertices.clear();
-		rm.indices.clear();
-		rm.raw_mesh_infos.clear();
+
+		std::optional<GLuint> diff_id = get_texture(*rmi.diffuse_path, GL_TEXTURE0);
+		if (diff_id)
+			g_models.back().tex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex, *diff_id, *spec_id);
+		else {
+			zerror("could not find texture %s from model file %s", rmi.diffuse_path->c_str(), paths[i].c_str());
+			g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
+		}
 	}
+	rm.vertices.clear();
+	rm.indices.clear();
+	rm.raw_mesh_infos.clear();
+
+	}
+*/
 	glBindVertexArray(0);
+	return model;
 }
 
+Model_Asset *
+get_model(Model_ID id)
+{
+	if (asset_lookup_table[id])
+		return (Model_Asset *)asset_lookup_table[id];
+	Model_Asset *m = load_model_from_disk(id);
+	asset_lookup_table[id] = m;
+	return m;
+}
+
+/*
 // Font texture packing.
 struct Pack_Node {
 	Vec2u available;
@@ -485,9 +698,13 @@ find_space(Pack_Node *n, Vec2u wanted)
 }
 
 static void
-free_pack_tree()
+free_pack_tree(Pack_Node *n)
 {
-
+	if (n->l)
+		free_pack_tree(n->l);
+	if (n->r)
+		free_pack_tree(n->r);
+	free(n);
 }
 
 static void
@@ -495,19 +712,24 @@ pack_font(const FT_Library &ft, const char *font_path, const Vec2u tex_dim, cons
 {
 	FT_Face face;
 	if (FT_New_Face(ft, font_path, 0, &face))
-		zabort("failed to load font arial");
+		zabort("failed to load font %s", font_path);
+	DEFER(FT_Done_Face(face));
 	FT_Set_Pixel_Sizes(face, 0, 24);
 
-	Pack_Node root = { tex_dim, {0, 0}, NULL, NULL };
+	Pack_Node *root = (Pack_Node *)malloc(sizeof(Pack_Node));
+	root->available = tex_dim;
+	root->upper_left = {0, 0};
+	root->l = NULL; root->r = NULL;
+	DEFER(free_pack_tree(root));
+
 	for (unsigned char c = 0; c < 128; ++c) {
 		if (FT_Load_Char(face, c, FT_LOAD_RENDER)) {
 			zerror("FreeType failed to load character %c", c);
 			continue;
 		}
-		std::optional<Vec2s> tex_upper_left = find_space(&root, {(unsigned)std::abs(face->glyph->bitmap.pitch), face->glyph->bitmap.rows});
+		std::optional<Vec2s> tex_upper_left = find_space(root, {(unsigned)std::abs(face->glyph->bitmap.pitch), face->glyph->bitmap.rows});
 		if (!tex_upper_left) {
 			zerror("failed to pack font");
-			free_pack_tree();
 			return;
 		}
 		blit_glyph(face->glyph->bitmap, *tex_upper_left, tex_dim.x, buf);
@@ -529,36 +751,64 @@ pack_font(const FT_Library &ft, const char *font_path, const Vec2u tex_dim, cons
 		g->canonical_vertices[5] = { {x1, y1, 0.0f}, {u1, v1}};
 		g->advance = (face->glyph->advance.x >> 6) * screen_scale.x; // FreeType stores advance in 1/64th pixels.
 	}
-	FT_Done_Face(face);
+}
+*/
+
+void
+render_update_view(const Camera &cam)
+{
+	g_matrices.view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
+	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
+	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, view), sizeof(g_matrices.view), glm::value_ptr(g_matrices.view));
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+	// TODO: We could split this function up and avoid updating the view pos when only our facing direction changes
+	glUseProgram(g_shaders.textured_mesh);
+	glUniform3f(glGetUniformLocation(g_shaders.textured_mesh, "u_view_pos"), cam.pos.x, cam.pos.y, cam.pos.z);
+	glUseProgram(0);
+
+}
+
+void
+render_update_projection(const Camera &cam, const V2u &screen_dim)
+{
+	g_matrices.perspective_proj = glm::perspective(cam.fov, (float)screen_dim.x / (float)screen_dim.y, cam.near, cam.far);
+	g_matrices.ortho_proj = glm::ortho(0.0f, 100.0f, 100.0f, 0.0f);
+	//g_matrices.ortho_proj = glm::ortho(0.0f, (float)screen_dim.x, (float)screen_dim.y, 0.0f);
+	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
+	// TODO: We could combine these calls (will break if Matrices changes)
+	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, perspective_proj), sizeof(g_matrices.perspective_proj), glm::value_ptr(g_matrices.perspective_proj));
+	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, ortho_proj), sizeof(g_matrices.ortho_proj), glm::value_ptr(g_matrices.ortho_proj));
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
 
 // Init.
 void
-render_init(const Camera &cam, const Vec2i &screen_dim)
+render_init(const Camera &cam, const V2u &screen_dim)
 {
-	// init glew
-	{
-		glewExperimental = true;
-		GLenum err = glewInit();
-		if (GLEW_OK != err)
-			zabort("%s\n", glewGetErrorString(err));
-	}
-
+	//IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG);
 	glEnable(GL_DEPTH_TEST);
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 	glViewport(0, 0, screen_dim.x, screen_dim.y);
 
+	for (int i = 0; i < NUM_MODEL_IDS; ++i) {
+		g_model_instances[i] = mem_make_arena();
+	}
+
+	Memory_Arena init_arena = mem_make_arena();
+	DEFER(mem_destroy_arena(&init_arena));
+
 	// init shaders
 	{
-		std::optional<std::string> vert = load_file("shaders/shader.vert", "r");
+		const char *vert = platform_read_entire_file("assets/shaders/shader.vert", &init_arena);
 		assert(vert);
-		std::optional<std::string> frag = load_file("shaders/shader.frag", "r");
+		const char *frag = platform_read_entire_file("assets/shaders/shader.frag", &init_arena);
 		assert(frag);
 
-		g_shaders.textured_mesh = make_gpu_program(*vert, *frag, "#define TEXTURED_MESH\n");
-		g_shaders.untextured_mesh = make_gpu_program(*vert, *frag, "#define UNTEXTURED_MESH\n");
-		g_shaders.ui = make_gpu_program(*vert, *frag, "#define UI\n");
-		g_shaders.text = make_gpu_program(*vert, *frag, "#define TEXT\n");
+		g_shaders.textured_mesh = make_gpu_program(vert, frag, "#define TEXTURED_MESH\n");
+		g_shaders.untextured_mesh = make_gpu_program(vert, frag, "#define UNTEXTURED_MESH\n");
+		g_shaders.ui = make_gpu_program(vert, frag, "#define UI\n");
+		g_shaders.text = make_gpu_program(vert, frag, "#define TEXT\n");
 	}
 
 	auto set_bind_pt = [](const GLuint program, const char *name, const GLuint bind_pt) {
@@ -624,6 +874,7 @@ render_init(const Camera &cam, const Vec2i &screen_dim)
 		glUseProgram(0);
 	}
 
+/*
 	// init ui render info
 	{
 		// TODO: use index buffer for ui vertices
@@ -647,73 +898,58 @@ render_init(const Camera &cam, const Vec2i &screen_dim)
 		FT_Library ft;
 		if (FT_Init_FreeType(&ft))
 			zabort("could not init freetype lib");
-		Font *font = &g_font_map["arial"];
+		DEFER(FT_Done_FreeType(ft));
+		const char *font_paths[] = {
+			"fonts/arial.ttf",
+			"fonts/Anonymous Pro.ttf",
+		};
+		constexpr unsigned tex_size = 512; 
+		unsigned char tex_buf[tex_size*tex_size];
+		char base_name[512];
+		for (const char *path : font_paths) {
+			bool bn = get_base_name(path, base_name);
+			assert(bn);
+			Font *font = &g_font_map[base_name];
+			array_init(&font->vertices, MAX_GLYPH_VERTICES);
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			pack_font(ft, path, {tex_size, tex_size}, {100.0f/screen_dim.x, 100.0f/screen_dim.y}, font->glyph_map, tex_buf);
 
-		unsigned char tex_buf[512*512];
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		pack_font(ft, "fonts/arial.ttf", {512, 512}, {100.0f/screen_dim.x, 100.0f/screen_dim.y}, font->glyph_map, tex_buf);
+			glGenTextures(1, &font->texture);
+			glBindTexture(GL_TEXTURE_2D, font->texture);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, tex_size, tex_size, 0, GL_RED, GL_UNSIGNED_BYTE, tex_buf);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-		glGenTextures(1, &font->texture);
-		glBindTexture(GL_TEXTURE_2D, font->texture);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 512, 512, 0, GL_RED, GL_UNSIGNED_BYTE, tex_buf);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			glGenVertexArrays(1, &font->vao);
+			glGenBuffers(1, &font->vbo);
 
-		glGenVertexArrays(1, &font->vao);
-		glGenBuffers(1, &font->vbo);
+			glBindVertexArray(font->vao);
+			glBindBuffer(GL_ARRAY_BUFFER, font->vbo);
+			glBufferData(GL_ARRAY_BUFFER, MAX_GLYPH_VERTICES*sizeof(Glyph_Vertex), NULL, GL_DYNAMIC_DRAW);
 
-		glBindVertexArray(font->vao);
-		glBindBuffer(GL_ARRAY_BUFFER, font->vbo);
-		glBufferData(GL_ARRAY_BUFFER, MAX_TEXT_VERTICES*sizeof(Glyph_Vertex), NULL, GL_DYNAMIC_DRAW);
+			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Glyph_Vertex), (GLvoid *)offsetof(Glyph_Vertex, position));
+			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Glyph_Vertex), (GLvoid *)offsetof(Glyph_Vertex, uv));
 
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Glyph_Vertex), (GLvoid *)offsetof(Glyph_Vertex, position));
-		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Glyph_Vertex), (GLvoid *)offsetof(Glyph_Vertex, uv));
-
-		glEnableVertexAttribArray(0);
-		glEnableVertexAttribArray(1);
+			glEnableVertexAttribArray(0);
+			glEnableVertexAttribArray(1);
+		}
 
 		glUseProgram(g_shaders.text);
 		glUniform1i(glGetUniformLocation(g_shaders.text, "u_texture"), 0);
-
-		FT_Done_FreeType(ft);
 	}
 
-	load_models();
+*/
+	//load_models();
 }
 
 void
-render_update_view(const Camera &cam)
+render_add_instance(Model_ID id, const glm::vec3 &pos)
 {
-	g_matrices.view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
-	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
-	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, view), sizeof(g_matrices.view), glm::value_ptr(g_matrices.view));
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
-
-	// TODO: We could split this function up and avoid updating the view pos when only our facing direction changes
-	glUseProgram(g_shaders.textured_mesh);
-	glUniform3f(glGetUniformLocation(g_shaders.textured_mesh, "u_view_pos"), cam.pos.x, cam.pos.y, cam.pos.z);
-	glUseProgram(0);
-
-}
-
-void
-render_update_projection(const Camera &cam, const Vec2i &screen_dim)
-{
-	g_matrices.perspective_proj = glm::perspective(cam.fov, (float)screen_dim.x / (float)screen_dim.y, cam.near, cam.far);
-	g_matrices.ortho_proj = glm::ortho(0.0f, 100.0f, 100.0f, 0.0f);
-	//g_matrices.ortho_proj = glm::ortho(0.0f, (float)screen_dim.x, (float)screen_dim.y, 0.0f);
-	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
-	// TODO: We could combine these calls (will break if Matrices changes)
-	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, perspective_proj), sizeof(g_matrices.perspective_proj), glm::value_ptr(g_matrices.perspective_proj));
-	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, ortho_proj), sizeof(g_matrices.ortho_proj), glm::value_ptr(g_matrices.ortho_proj));
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
-}
-
-std::optional<Render_Id>
-render_add_instance(std::string name, const glm::vec3 &pos)
-{
+	Model_Instance *i = mem_alloc(Model_Instance, &g_model_instances[id]);
+	i->pos = glm::translate(glm::mat4(), pos);
+/*
 	auto it = g_model_map.find(name);
 	if (it == g_model_map.end()) {
 		zerror("tried to add instance of invalid model '%s'", name.c_str());
@@ -724,8 +960,10 @@ render_add_instance(std::string name, const glm::vec3 &pos)
 	printf("added instance of %s\n", name.c_str());
 	Render_Id rid = { it->second, m->instances.size()-1 };
 	return rid;
+*/
 }
 
+/*
 void
 render_update_instance(const Render_Id rid, const glm::vec3 &offset)
 {
@@ -735,16 +973,43 @@ render_update_instance(const Render_Id rid, const glm::vec3 &offset)
 	glm::mat4 *in = &m->instances[rid.instance_ind];
 	*in = glm::translate(*in, offset);
 }
+*/
 
-// We handle untextured meshes which slows us down (extra gl calls, extra loops).
-// Should make that a debug switch in the future and have a release build that just dies if there is no texture.
-// Is it faster to draw all similar meshes at once (less texture switching but more model uniform switching)
+// TODO:
+// - We handle untextured meshes which slows us down (extra gl calls, extra loops).
+//   Should make that a debug switch in the future and have a release build that just dies if there is no texture.
+// - Is it faster to draw all similar meshes at once (less texture switching but more model uniform switching)
+// - Might be better to have an "active_models" list that copies all models with instances. 
+// - Should put all instances into a single list with a model_id and just sort the list before render.
 void
 render_sim()
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	// TODO: Put these locations in the Shader struct.
 	GLint tex_model_loc = glGetUniformLocation(g_shaders.textured_mesh, "u_model");
 	GLint notex_model_loc = glGetUniformLocation(g_shaders.untextured_mesh, "u_model");
+	for (int i = 0; i < NUM_MODEL_IDS; ++i) {
+		Model_Asset *model;
+		GLuint num_meshes;
+		if (mem_has_elems(&g_model_instances[i])) {
+			model = get_model((Model_ID)i);
+			glBindVertexArray(model->vao);
+			glBindBuffer(GL_ARRAY_BUFFER, model->vbo);
+			num_meshes = model->num_meshes;
+		}
+		for (Model_Instance *inst = (Model_Instance *)mem_start(&g_model_instances[i]); inst; inst = (Model_Instance *)mem_next(inst)) {
+			glUseProgram(g_shaders.textured_mesh);
+			glUniformMatrix4fv(tex_model_loc, 1, GL_FALSE, glm::value_ptr(inst->pos));
+			for (int j = 0; j < num_meshes; ++j) {
+				glActiveTexture(GL_TEXTURE0);
+				glBindTexture(GL_TEXTURE_2D, model->meshes[j].diffuse_id);
+				glActiveTexture(GL_TEXTURE1);
+				glBindTexture(GL_TEXTURE_2D, model->meshes[j].specular_id);
+				glDrawElements(GL_TRIANGLES, model->meshes[j].num_indices, GL_UNSIGNED_INT, (GLvoid *)(model->meshes[j].base_vertex * sizeof(GLuint)));
+			}
+		}
+	}
+	/*
 	for (const auto &model : g_models) {
 		glBindVertexArray(model.vao);
 		glBindBuffer(GL_ARRAY_BUFFER, model.vbo);
@@ -764,25 +1029,28 @@ render_sim()
 				glDrawElements(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, (GLvoid *)(mesh.base_vertex * sizeof(GLuint)));
 		}
 	}
+	*/
 }
 
+/*
 #define VERTS_PER_GLYPH 6
 
-
-static Glyph_Info
-offset_glyph(Glyph_Info g, float *x, float *y)
+static void
+push_glyph(Glyph_Info g, float *x, float *y, Glyph_Vertex *buf)
 {
 	for (int i = 0; i < VERTS_PER_GLYPH; ++i) {
-		g.canonical_vertices[i].position.x += *x;
-		g.canonical_vertices[i].position.y += *y;
+		buf[i].position.x = g.canonical_vertices[i].position.x + *x;
+		buf[i].position.y = g.canonical_vertices[i].position.y + *y;
+		buf[i].position.z = 0.0f;
+		buf[i].uv.x = g.canonical_vertices[i].uv.x;
+		buf[i].uv.y = g.canonical_vertices[i].uv.y;
 	}
 	*x += g.advance;
-	return g;
 }
 
-
+*/
 void
-render_ui(const UI_State &ui)
+render_ui()
 {
 	glClear(GL_DEPTH_BUFFER_BIT);
 	/*assert(ui.vertices.size() <= MAX_UI_VERTICES);
@@ -791,7 +1059,6 @@ render_ui(const UI_State &ui)
 	glBindBuffer(GL_ARRAY_BUFFER, g_ui_render_info.vbo);
 	glBufferSubData(GL_ARRAY_BUFFER, 0, ui.vertices.size()*sizeof(UI_Vertex), ui.vertices.data());
 	glDrawArrays(GL_TRIANGLES, 0, ui.vertices.size());
-*/
 
 	glDisable(GL_CULL_FACE);
 	glEnable(GL_BLEND);
@@ -803,7 +1070,7 @@ render_ui(const UI_State &ui)
 	assert(itr != g_font_map.end());
 	Font *font = &itr->second;
 
-	font->vertices.clear();
+	array_clear(&font->vertices);
 	glUseProgram(g_shaders.text);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, font->texture);
@@ -812,16 +1079,17 @@ render_ui(const UI_State &ui)
 	for (char *text = t; *text; ++text) {
 		auto gitr = font->glyph_map.find(*text);
 		assert(gitr != font->glyph_map.end());
-		Glyph_Info ofs_glyph = offset_glyph(gitr->second, &x, &y);
-		font->vertices.insert(font->vertices.end(), ofs_glyph.canonical_vertices, ofs_glyph.canonical_vertices + VERTS_PER_GLYPH);
+		push_glyph(gitr->second, &x, &y, array_alloc(&font->vertices, VERTS_PER_GLYPH));
 	}
-	glBufferSubData(GL_ARRAY_BUFFER, 0, font->vertices.size()*sizeof(Glyph_Vertex), font->vertices.data());
-	glDrawArrays(GL_TRIANGLES, 0, font->vertices.size());
+	glBufferSubData(GL_ARRAY_BUFFER, 0, font->vertices.size*sizeof(Glyph_Vertex), font->vertices.elems);
+	glDrawArrays(GL_TRIANGLES, 0, font->vertices.size);
+*/
 }
 
 void
 render_quit()
 {
+/*
 	glBindVertexArray(0);
 	glUseProgram(0);
 	glDeleteProgram(g_shaders.textured_mesh);
@@ -835,4 +1103,5 @@ render_quit()
 			glDeleteTextures(1, &mesh.specular_id);
 		}
 	}
+*/
 }

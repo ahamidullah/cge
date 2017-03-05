@@ -1,43 +1,42 @@
-#include "input.h"
-
 void
-input_key_down(Keyboard *kb, const SDL_KeyboardEvent& e)
+input_key_down(Keyboard *kb, unsigned scancode)
 {
-	kb->keys[e.keysym.scancode] = true;
-	if (e.repeat)
-		kb->keys_toggle[e.keysym.scancode] = false;
+	kb->keys[scancode] = true;
+	if (kb->keys_toggle[scancode])
+		kb->keys_toggle[scancode] = false;
 	else
-		kb->keys_toggle[e.keysym.scancode] = true;
-		
+		kb->keys_toggle[scancode] = true;
 }
 
 void
-input_key_up(Keyboard *kb, const SDL_KeyboardEvent& e)
+input_key_up(Keyboard *kb, unsigned scancode)
 {
-	kb->keys[e.keysym.scancode] = false;
-	kb->keys_toggle[e.keysym.scancode] = false;
+	kb->keys[scancode] = false;
+	kb->keys_toggle[scancode] = false;
 }
 
 bool
-input_is_key_down(const Keyboard *kb, const SDL_Keycode k)
+input_is_key_down(const Keyboard *kb, Key_Symbol ks)
 {
-	return kb->keys[SDL_GetScancodeFromKey(k)];
+	return kb->keys[platform_keysym_to_scancode(ks)];
 }
 
 // has the key moved from up to down? if so, unset it in keys_toggle
 // if multiple people people are looking for the same key press, only the first will get it -- bad
 // but I don't want to use callbacks so this will do for now
 bool
-input_was_key_pressed(Keyboard *kb, const SDL_Keycode k)
+input_was_key_pressed(Keyboard *kb, Key_Symbol ks)
 {
-	SDL_Scancode sc = SDL_GetScancodeFromKey(k);
+	unsigned sc = platform_keysym_to_scancode(ks);
+	//SDL_Scancode sc = SDL_GetScancodeFromKey(k);
 	if (kb->keys_toggle[sc]) {
-		//kb->keys_toggle[sc] = false;
+		kb->keys_toggle[sc] = false;
 		return true;
 	}
 	return false;
 }
 
+/*
 void
 input_mbutton_down(const SDL_MouseButtonEvent &e, Mouse *m)
 {
@@ -66,3 +65,4 @@ input_update_mouse(Mouse *m)
 	SDL_GetRelativeMouseState(&m->motion.x, &m->motion.y);
 	SDL_GetMouseState(&m->pos.x, &m->pos.y);
 }
+*/

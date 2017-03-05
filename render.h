@@ -9,11 +9,6 @@
 #include "zlib.h"
 #include "ui.h"
 
-struct Render_Id {
-	size_t model_ind;
-	size_t instance_ind;
-};
-
 struct Camera {
 	float pitch;
 	float yaw;

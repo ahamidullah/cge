@@ -1,14 +1,33 @@
-#include <stdio.h>
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
-#include <glm/gtc/matrix_transform.hpp>
-#include <GL/glew.h>
+//#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <assert.h>
+#include <string.h>
+#include <stdarg.h>
 
-#include "render.h"
-#include "update.h"
-#include "zlib.h"
-#include "ui.h"
+#include "asset_ids.h"
+#include "math.h"
+#include "lib.h"
 #include "input.h"
+#include "memory.h"
+#include "platform.h"
+#include "memory.cpp"
+#include "lib.cpp"
+#include "render.cpp"
+#include "input.cpp"
+
+//#include <GL/glew.h>
+
+//#include "render.h"
+//#include "update.h"
+//#include "zlib.h"
+//#include "ui.h"
+
+enum struct Program_State {
+	run = 0,
+	pause,
+	exit
+};
 
 glm::vec3
 calc_front(GLfloat pitch, GLfloat yaw)
@@ -23,17 +42,19 @@ calc_front(GLfloat pitch, GLfloat yaw)
 void
 update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 {
+/*
 	static Camera saved_cam = { -45.0f, 45.0f, 0.2f, glm::vec3(0.0f, 10.0f,  -5.0f), calc_front(-45.0f, 45.0f), glm::vec3(0.0f, 1.0f,  0.0f), 45.0f, 0.1f, 100.0f };
 	static bool is_first_person = true;
 
-	if (input_was_key_pressed(kb, SDLK_g)) {
+	if (input_was_key_pressed(kb, G_KEY)) {
 		Camera temp = *cam;
 		*cam = saved_cam;
 		saved_cam = temp;
 		is_first_person = !is_first_person;
 	}
-
-	if (is_first_person) {
+*/
+	//if (is_first_person) {
+	if (true) {
 		if (m.motion.x != 0 || m.motion.y != 0) {
 			cam->yaw += m.motion.x * m.sensitivity;
 			cam->pitch -= m.motion.y * m.sensitivity; //reversed because y coord range from top to bottom
@@ -45,42 +66,43 @@ update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 			}
 			cam->front = calc_front(cam->pitch, cam->yaw);
 		}
-		if(input_is_key_down(kb, SDLK_w))
+		if(input_is_key_down(kb, W_KEY))
 			cam->pos += cam->speed * cam->front;
-		if(input_is_key_down(kb, SDLK_s))
+		if(input_is_key_down(kb, S_KEY))
 			cam->pos -= cam->speed * cam->front;
-		if(input_is_key_down(kb, SDLK_a))
+		if(input_is_key_down(kb, A_KEY))
 			cam->pos -= glm::normalize(glm::cross(cam->front, cam->up)) * cam->speed;
-		if(input_is_key_down(kb, SDLK_d))
+		if(input_is_key_down(kb, D_KEY))
 			cam->pos += glm::normalize(glm::cross(cam->front, cam->up)) * cam->speed;
-		if(input_is_key_down(kb, SDLK_q))
+		if(input_is_key_down(kb, Q_KEY))
 			cam->pos += cam->speed * cam->up;
-		if(input_is_key_down(kb, SDLK_e))
+		if(input_is_key_down(kb, E_KEY))
 			cam->pos -= cam->speed * cam->up;
 	} else {
-		if(input_is_key_down(kb, SDLK_w))
+		if(input_is_key_down(kb, W_KEY))
 			cam->pos += cam->speed * glm::vec3(cam->front.x, 0.0f, cam->front.z);
-		if(input_is_key_down(kb, SDLK_s))
+		if(input_is_key_down(kb, S_KEY))
 			cam->pos -= cam->speed * glm::vec3(cam->front.x, 0.0f, cam->front.z);
-		if(input_is_key_down(kb, SDLK_a))
+		if(input_is_key_down(kb, A_KEY))
 			cam->pos -= cam->speed * glm::cross(glm::vec3(cam->front.x, 0.0f, cam->front.z), glm::vec3(0.0f, 1.0f, 0.0f));
-		if(input_is_key_down(kb, SDLK_d))
+		if(input_is_key_down(kb, D_KEY))
 			cam->pos += cam->speed * glm::cross(glm::vec3(cam->front.x, 0.0f, cam->front.z), glm::vec3(0.0f, 1.0f, 0.0f));
-		if(input_is_key_down(kb, SDLK_r))
+		if(input_is_key_down(kb, R_KEY))
 			cam->pos += cam->speed * cam->front;
-		if(input_is_key_down(kb, SDLK_f))
+		if(input_is_key_down(kb, F_KEY))
 			cam->pos -= cam->speed * cam->front;
-		if(input_is_key_down(kb, SDLK_q)) {
+		if(input_is_key_down(kb, Q_KEY)) {
 			cam->yaw -= 5.0f;
 			cam->front = calc_front(cam->pitch, cam->yaw);
 		}
-		if(input_is_key_down(kb, SDLK_e)) {
+		if(input_is_key_down(kb, E_KEY)) {
 			cam->yaw += 5.0f;
 			cam->front = calc_front(cam->pitch, cam->yaw);
 		}
 	}
 }
 
+/*
 Program_State
 handle_events(Keyboard *kb, Mouse *m, const Vec2i &screen_dim, const Camera &cam)
 {
@@ -110,16 +132,85 @@ handle_events(Keyboard *kb, Mouse *m, const Vec2i &screen_dim, const Camera &cam
 	}
 	return Program_State::run;
 }
+*/
 
-int
-main()
+void
+main_loop(V2u screen_dim)
 {
-	//SDL_SetRelativeMouseMode(SDL_TRUE);
-	Keyboard kb = { {0}, {0} };
 	Camera cam = { 0.0f, 0.0f, 1.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 45.0f, 0.1f, 100.0f };
-	Mouse mouse = { {400, 300}, {400, 300}, 0.1f, 0 };
-	Vec2i screen_dim = { 800, 600 };
-	UI_State ui;
+	cam.pos -= 50.0f*cam.front;
+	//Camera cam = { -45.0f, 45.0f, 0.2f, glm::vec3(0.0f, 10.0f,  -5.0f), calc_front(-45.0f, 45.0f), glm::vec3(0.0f, 1.0f,  0.0f), 45.0f, 0.1f, 100.0f };
+	Input input;
+	input.mouse = { {screen_dim.x/2, screen_dim.y/2}, {0, 0}, 0.1f, 0 };
+	input.keyboard = { {0}, {0} };
+	V2f a = {1.0f, 2.0f};
+	a *= 4.0f;
+	//printf("%d %d\n", (int)a.x, (int)a.y);
+
+	Program_State state = Program_State::run;
+	constexpr unsigned TICKS_PER_SECOND =  25;
+	constexpr unsigned SKIP_TICKS = 1000/TICKS_PER_SECOND;
+	constexpr unsigned MAX_FRAMESKIP = 5;
+	unsigned num_updates = 0;
+	//unsigned next_tick = SDL_GetTicks();
+	render_init(cam, screen_dim);
+	render_add_instance(NANOSUIT_MODEL, glm::vec3(0.0f, 0.0f, 0.0f));
+
+	/*
+	auto set_bind_pt = [](const GLuint program, const char *name, const GLuint bind_pt) {
+		const GLuint ind = glGetUniformBlockIndex(program, name);
+		glUniformBlockBinding(program, ind, bind_pt);
+	};
+	// init matrix ubo
+	{
+		set_bind_pt(g_shaders.textured_mesh, "Matrices", 0);
+		set_bind_pt(g_shaders.untextured_mesh, "Matrices", 0);
+		set_bind_pt(g_shaders.ui, "Matrices", 0);
+		glGenBuffers(1, &g_ubos.matrices);
+
+		//render_update_view(cam);
+		//render_update_projection(cam, screen_dim);
+		glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
+		glBufferData(GL_UNIFORM_BUFFER, 0, NULL, GL_STATIC_DRAW);
+		glBindBuffer(GL_UNIFORM_BUFFER, 0);
+		glBindBufferBase(GL_UNIFORM_BUFFER, 0, g_ubos.matrices);
+	}
+	*/
+	//char str[] = "of the system";
+	//printf("          just %d and then %s before very long so that the buffer might overflow nad then we can see what the hech is going to happen ii don't know but I'll prob have to make the buffer a bit smaller so that this works the %c\n", 123456, str, '(');
+	//printf("test %d\n", 45);
+	while (state != Program_State::exit) {
+		switch (state) {
+		case Program_State::run: {
+			num_updates = 0;
+			//while (next_tick < SDL_GetTicks() && num_updates < MAX_FRAMESKIP) {
+			while (1) {
+				platform_handle_events(&input);
+				//state = handle_events(&kb, &mouse, screen_dim, cam);
+				//input_update_mouse(&mouse);
+				//update_sim();
+				//state = ui_update(mouse, screen_dim, state, &ui);
+				//next_tick += SKIP_TICKS;
+				++num_updates;
+				update_camera(input.mouse, &input.keyboard, &cam);
+				render_update_view(cam);
+				render_sim();
+				input.mouse.motion = {0,0};
+				platform_swap_buffers();
+			}
+			//render_sim();
+			//render_ui(ui);
+			//SDL_GL_SwapWindow(window);
+			break;
+		}
+		case Program_State::pause:
+			break;
+		case Program_State::exit:
+			break;
+		}
+	}
+}
+	/*UI_State ui;
 	SDL_Window *window;
 	SDL_GLContext context;
 
@@ -151,43 +242,8 @@ main()
 	update_init();
 	ui_init(&ui);
 
-	Program_State state = Program_State::run;
-	constexpr unsigned TICKS_PER_SECOND =  25;
-	constexpr unsigned SKIP_TICKS = 1000/TICKS_PER_SECOND;
-	constexpr unsigned MAX_FRAMESKIP = 5;
-	unsigned num_updates = 0;
-	unsigned next_tick = SDL_GetTicks();
-
-	while (state != Program_State::exit) {
-		switch (state) {
-		case Program_State::run: {
-			num_updates = 0;
-			while (next_tick < SDL_GetTicks() && num_updates < MAX_FRAMESKIP) {
-				state = handle_events(&kb, &mouse, screen_dim, cam);
-				input_update_mouse(&mouse);
-				update_camera(mouse, &kb, &cam);
-				render_update_view(cam);
-				update_sim();
-				state = ui_update(mouse, screen_dim, state, &ui);
-				next_tick += SKIP_TICKS;
-				++num_updates;
-			}
-			render_sim();
-			render_ui(ui);
-			SDL_GL_SwapWindow(window);
-			break;
-		}
-		case Program_State::pause:
-			break;
-		case Program_State::exit:
-			break;
-		}
-	}
 	render_quit();
 	SDL_DestroyWindow(window);
 	SDL_GL_DeleteContext(context);
 	IMG_Quit();
-	SDL_Quit();
-	return 0;
-}
-
+	SDL_Quit();*/

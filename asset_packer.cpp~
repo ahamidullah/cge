@@ -1,0 +1,214 @@
+
+struct Model_Vertex {
+	float position[3];
+	float normal[3];
+	float uv[2];
+};
+
+struct Raw_Mesh_Info {
+	uint64_t num_indices;
+	uint64_t base_vertex;
+	std::optional<std::string> diffuse_path;
+	std::optional<std::string> specular_path;
+};
+
+struct Raw_Model {
+	std::vector<Raw_Mesh_Info> raw_mesh_infos;
+	std::vector<Model_Vertex> vertices;
+	std::vector<uint64_t> indices;
+};
+
+static void
+process_assimp_node(aiNode* node, const aiScene* scene, Raw_Model *rm)
+{
+	for (unsigned m = 0; m < node->mNumMeshes; ++m) {
+		aiMesh* mesh = scene->mMeshes[node->mMeshes[m]];
+		// Assimp keeps track of indices per mesh, but we want them per model.
+		GLuint base_index = rm->vertices.size();
+		assert(mesh->HasPositions() && mesh->HasNormals() && mesh->HasFaces());
+		for (unsigned i = 0; i < mesh->mNumVertices; ++i) {
+			Model_Vertex v;
+			v.position[0] = mesh->mVertices[i].x;
+			v.position[1] = mesh->mVertices[i].y;
+			v.position[2] = mesh->mVertices[i].z;
+			if (mesh->mNormals) {
+				v.normal[0] = mesh->mNormals[i].x;
+				v.normal[1] = mesh->mNormals[i].y;
+				v.normal[2] = mesh->mNormals[i].z;
+			}
+			if (mesh->mTextureCoords[0]) {
+				v.uv[0] = mesh->mTextureCoords[0][i].x;
+				v.uv[1] = mesh->mTextureCoords[0][i].y;
+			}
+			rm->vertices.push_back(v);
+		}
+		int base_vertex = rm->indices.size();
+		int num_mesh_inds = 0;
+		for (unsigned i = 0; i < mesh->mNumFaces; ++i) {
+			aiFace face = mesh->mFaces[i];
+			assert(face.mNumIndices == 3);
+			num_mesh_inds += face.mNumIndices;
+			for (GLuint j = 0; j < face.mNumIndices; ++j) {
+				rm->indices.push_back(base_index + face.mIndices[j]);
+			}
+		}
+		// Doesn't handle multiple textures per mesh.
+		aiMaterial* mat = scene->mMaterials[mesh->mMaterialIndex];
+		aiString diffuse_path, specular_path;
+		aiReturn has_diffuse = mat->GetTexture(aiTextureType_DIFFUSE, 0, &diffuse_path);
+		aiReturn has_specular = mat->GetTexture(aiTextureType_DIFFUSE, 0, &specular_path);
+		if (has_diffuse == AI_SUCCESS && has_specular == AI_SUCCESS)
+			rm->raw_mesh_infos.emplace_back(num_mesh_inds, base_vertex, diffuse_path.C_Str(), specular_path.C_Str());
+		else if (has_diffuse == AI_SUCCESS)
+			rm->raw_mesh_infos.emplace_back(num_mesh_inds, base_vertex, diffuse_path.C_Str(), std::nullopt);
+		else if (has_specular == AI_SUCCESS)
+			rm->raw_mesh_infos.emplace_back(num_mesh_inds, base_vertex, std::nullopt, specular_path.C_Str());
+		else
+			rm->raw_mesh_infos.emplace_back(num_mesh_inds, base_vertex, std::nullopt, std::nullopt);
+	}
+	for (unsigned i = 0; i < node->mNumChildren; ++i)
+		process_node(node->mChildren[i], scene, rm);
+}
+
+// Loading is all temp so don't really care if it's slow
+static void
+load_models()
+{
+	std::vector<std::string> paths = {
+		"models/nanosuit.obj",
+	};
+	int num_files = paths.size();
+
+	std::vector<GLuint> vao_ids;
+	std::vector<GLuint> vbo_ids;
+	std::vector<GLuint> ebo_ids;
+
+	vao_ids.resize(num_files);
+	vbo_ids.resize(num_files);
+	ebo_ids.resize(num_files);
+
+	glGenVertexArrays(num_files, vao_ids.data());
+	glGenBuffers(num_files, vbo_ids.data());
+	glGenBuffers(num_files, ebo_ids.data());
+
+	Raw_Model rm;
+	for (int i = 0; i < num_files; ++i) {
+		Assimp::Importer import;
+		const aiScene* scene = import.ReadFile(paths[i], aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_JoinIdenticalVertices);
+		if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
+			zerror("Assimp error: %s", import.GetErrorString());
+			continue;
+		}
+		process_node(scene->mRootNode, scene, &rm);
+
+		glBindVertexArray(vao_ids[i]);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo_ids[i]);
+		glBufferData(GL_ARRAY_BUFFER, rm.vertices.size()*sizeof(Model_Vertex), rm.vertices.data(), GL_STATIC_DRAW);
+
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)0);
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)(sizeof(GLfloat)*3));
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid*)(sizeof(GLfloat)*6));
+
+		glEnableVertexAttribArray(0);
+		glEnableVertexAttribArray(1);
+		glEnableVertexAttribArray(2);
+
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_ids[i]);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm.indices.size()*sizeof(GLuint), rm.indices.data(), GL_STATIC_DRAW);
+
+		g_models.emplace_back(vao_ids[i], vbo_ids[i]);
+		g_model_map[GET_BASE_NAME(paths[i])] = g_models.size()-1;
+		printf("loaded model %s\n", GET_BASE_NAME(paths[i]).c_str());
+
+		for (const auto &rmi : rm.raw_mesh_infos) {
+			if (!rmi.diffuse_path) {
+				g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
+				continue;
+			}
+
+			// We use texture target zero if we can't get a specular texture, which opengl says is "the default texture" in that texture unit.
+			// Is that ok? (I think so).
+			//g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
+			std::optional<GLuint> spec_id = 0;
+			if (rmi.specular_path) {
+				spec_id = get_texture(*rmi.specular_path, GL_TEXTURE1);
+				if (!spec_id) {
+					zerror("could not find texture %s from model file %s", rmi.specular_path->c_str(), paths[i].c_str());
+					spec_id = 0;
+				}
+			}
+
+			std::optional<GLuint> diff_id = get_texture(*rmi.diffuse_path, GL_TEXTURE0);
+			if (diff_id)
+				g_models.back().tex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex, *diff_id, *spec_id);
+			else {
+				zerror("could not find texture %s from model file %s", rmi.diffuse_path->c_str(), paths[i].c_str());
+				g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
+			}
+		}
+		rm.vertices.clear();
+		rm.indices.clear();
+		rm.raw_mesh_infos.clear();
+	}
+	glBindVertexArray(0);
+}
+
+struct ID_To_Filename {
+	int id;
+	const char *filename;
+};
+
+ID_To_Filename model_map[] = {
+	{ NANOSUIT_MODEL, "model/nanosuit.obj"},
+};
+
+std::map<std::string, uint64_t> texture_map;
+
+int
+main(int argc, char **argv)
+{
+	uint64_t num_textures_in_file = 0;
+	FILE *file = fopen("assets.ahh", "wb");
+	fseek(file, sizeof(Asset_File_Header), 0);
+
+	struct Asset_File_Header header;
+	int num_assets = sizeof(model_map)/sizeof(model_map[0]);
+	Raw_Model rm;
+	for (int i = 0; i < num_assets; ++i) {
+		Assimp::Importer import;
+		const aiScene* scene = import.ReadFile(model_map[i].filename, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_JoinIdenticalVertices);
+		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
+			printf("Assimp error: %s", import.GetErrorString());
+			continue;
+		}
+		process_node(scene->mRootNode, scene, &rm);
+		header.model_offsets[model_map[i].id] = ftell(file);
+
+		uint64_t num_verts = rm.vertices.size(), num_inds = rm.indices.size(), num_meshes = rm.raw_mesh_infos.size();
+		fwrite(&num_verts, sizeof(uint64_t), 1, file);
+		fwrite(&num_inds, sizeof(uint64_t), 1, file);
+		fwrite(rm.vertices.data(), sizeof(float), rm.vertices.size(), file);
+		fwrite(rm.indices.data(), sizeof(unsigned), rm.indices.size(), file);
+		fwrite(&num_meshes, sizeof(uint64_t), 1, file);
+		for (int j = 0; j < num_meshes; ++j) {
+			fwrite(&rm.raw_mesh_infos[j].num_indices, sizeof(uint64_t), 1, file);
+			fwrite(&rm.raw_mesh_infos[j].base_vertex, sizeof(uint64_t), 1, file);
+			if (rm.raw_mesh_infos[j].specular_path) {
+				auto it = texture_map.find(*rm.raw_mesh_infos[j].specular_path);
+				if (it == texture_map.end()) {
+					texture_map[*rm.raw_mesh_infos[j].specular_path] = num_textures_in_file;
+					fwrite(&num_textures_in_file++, sizeof(uint64_t), 1, file);
+				} else
+					fwrite(&it->second, sizeof(uint64_t), 1, file);
+			}
+			if (rm.raw_mesh_infos[j].diffuse_path) {
+				auto it = texture_map.find(*rm.raw_mesh_infos[j].diffuse_path);
+				if (it == texture_map.end()) {
+					texture_map[*rm.raw_mesh_infos[j].diffuse_path] = num_textures_in_file;
+					fwrite(&num_textures_in_file++, sizeof(uint64_t), 1, file);
+				} else
+					fwrite(&it->second, sizeof(uint64_t), 1, file);
+			}
+		}
+	}
+}
