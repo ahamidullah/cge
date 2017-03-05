@@ -460,66 +460,6 @@ get_model(Model_ID id)
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, num_indices*sizeof(GLuint), ind_buf, GL_STATIC_DRAW);
 
-/*
-	Assimp::Importer import;
-	const aiScene* scene = import.ReadFile(paths[i], aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_JoinIdenticalVertices);
-	if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-		zerror("Assimp error: %s", import.GetErrorString());
-		continue;
-	}
-	process_node(scene->mRootNode, scene, &rm);
-
-	glBindVertexArray(vao_ids[i]);
-	glBindBuffer(GL_ARRAY_BUFFER, vbo_ids[i]);
-	glBufferData(GL_ARRAY_BUFFER, rm.vertices.size()*sizeof(Model_Vertex), rm.vertices.data(), GL_STATIC_DRAW);
-
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)0);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid *)(sizeof(GLfloat)*3));
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Model_Vertex), (GLvoid*)(sizeof(GLfloat)*6));
-
-	glEnableVertexAttribArray(0);
-	glEnableVertexAttribArray(1);
-	glEnableVertexAttribArray(2);
-
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_ids[i]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, rm.indices.size()*sizeof(GLuint), rm.indices.data(), GL_STATIC_DRAW);
-
-	g_models.emplace_back(vao_ids[i], vbo_ids[i]);
-	g_model_map[GET_BASE_NAME(paths[i])] = g_models.size()-1;
-	printf("loaded model %s\n", GET_BASE_NAME(paths[i]).c_str());
-
-	for (const auto &rmi : rm.raw_mesh_infos) {
-		if (!rmi.diffuse_path) {
-			g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
-			continue;
-		}
-
-		// We use texture target zero if we can't get a specular texture, which opengl says is "the default texture" in that texture unit.
-		// Is that ok? (I think so).
-		//g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
-		std::optional<GLuint> spec_id = 0;
-		if (rmi.specular_path) {
-			spec_id = get_texture(*rmi.specular_path, GL_TEXTURE1);
-			if (!spec_id) {
-				zerror("could not find texture %s from model file %s", rmi.specular_path->c_str(), paths[i].c_str());
-				spec_id = 0;
-			}
-		}
-
-		std::optional<GLuint> diff_id = get_texture(*rmi.diffuse_path, GL_TEXTURE0);
-		if (diff_id)
-			g_models.back().tex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex, *diff_id, *spec_id);
-		else {
-			zerror("could not find texture %s from model file %s", rmi.diffuse_path->c_str(), paths[i].c_str());
-			g_models.back().notex_meshes.emplace_back(rmi.num_indices, rmi.base_vertex);
-		}
-	}
-	rm.vertices.clear();
-	rm.indices.clear();
-	rm.raw_mesh_infos.clear();
-
-	}
-*/
 	glBindVertexArray(0);
 	g_assets.lookup_table[id] = model;
 	return model;
