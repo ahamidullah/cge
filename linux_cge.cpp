@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <time.h>
 
 #include <GL/gl.h>
 #include <GL/glx.h>
@@ -15,9 +16,9 @@
 #include "glprocs.h"
 #undef DEFINEPROC
 
-//#define stdout 1
-//#define stdin 0
-//#define stderr 2
+#define stdout 1
+#define stdin 0
+#define stderr 2
 
 enum Linux_Key_Symbols {
 	PLATFORM_W_KEY = XK_w,
@@ -29,6 +30,10 @@ enum Linux_Key_Symbols {
 	PLATFORM_Q_KEY = XK_q,
 	PLATFORM_R_KEY = XK_r,
 	PLATFORM_F_KEY = XK_f,
+};
+
+struct Platform_Time {
+	timespec time;
 };
 
 struct File_Handle {
@@ -129,7 +134,6 @@ main()
 				glXGetFBConfigAttrib(g_pctx.display, fbconfigs[i], GLX_SAMPLE_BUFFERS, &samp_buf);
 				glXGetFBConfigAttrib(g_pctx.display, fbconfigs[i], GLX_SAMPLES, &samples);
 
-				printf("%d %d\n", samp_buf, samples);
 				if (best_fbc < 0 || (samp_buf && samples > best_num_samp))
 					best_fbc = i, best_num_samp = samples;
 				//if (worst_fbc < 0 || !samp_buf || samples < worst_num_samp)
@@ -180,7 +184,7 @@ main()
 			zerror("Unable to register WM_DELETE_WINDOW atom");
 	}
 
-	// create OpenGL context
+	// Create OpenGL context.
 	{
 		int major_ver, minor_ver;
 		if (!glXQueryVersion(g_pctx.display, &major_ver, &minor_ver))
@@ -239,7 +243,7 @@ platform_exit()
 
 void input_key_down(Keyboard *, unsigned);
 
-unsigned
+inline unsigned
 platform_keysym_to_scancode(Key_Symbol ks)
 {
 	return XKeysymToKeycode(g_pctx.display, ks);
@@ -413,3 +417,19 @@ platform_get_page_size()
 {
 	return sysconf(_SC_PAGESIZE);
 }
+
+inline Platform_Time
+platform_get_time()
+{
+	Platform_Time t;
+	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t.time);
+	return t;
+}
+
+// Time in milliseconds.
+inline long
+platform_time_diff(Platform_Time start, Platform_Time end, unsigned resolution)
+{
+	return (end.time.tv_nsec - start.time.tv_nsec) / resolution;
+}
+

@@ -133,7 +133,7 @@ main(int argc, char **argv)
 			continue;
 		}
 		process_assimp_node(scene->mRootNode, scene, &rm);
-		header.asset_offsets[model_map[i].id] = ftell(file);
+		header.named_asset_offsets[model_map[i].id] = ftell(file);
 
 		uint64_t num_verts = rm.vertices.size(), num_inds = rm.indices.size(), num_meshes = rm.raw_mesh_infos.size(), no_tex = (uint64_t) -1;
 		printf("%d %d %d\n", num_verts, num_inds, num_meshes);
@@ -175,6 +175,7 @@ main(int argc, char **argv)
 		rm.raw_mesh_infos.clear();
 	}
 	printf("num tex in file %d %d\n", num_textures_in_file, texture_map.size());
+	header.num_mesh_textures = num_textures_in_file;
 
 	// Write textures.
 	header.mesh_texture_table_offset = ftell(file);

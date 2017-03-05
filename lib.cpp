@@ -27,6 +27,13 @@ make_scope_exit(F f)
 #define DEFER(code) auto scope_exit_##__LINE__ = make_scope_exit([=](){code;})
 
 void
+strcpy(char *dest, char *src)
+{
+	while(*src)
+		*dest++ = *src++;
+}
+
+void
 strrev(char *start, char *end)
 {
 	while(start < end) {
@@ -55,6 +62,7 @@ push_integer(int i, char *buf)
 	return nbytes_writ;
 }
 
+// TODO: Handle floating point!!!!!
 size_t
 format_string(const char *fmt, va_list arg_list, char *buf)
 {
@@ -79,6 +87,11 @@ format_string(const char *fmt, va_list arg_list, char *buf)
 				buf[nbytes_writ++] = va_arg(arg_list, int);
 				break;
 			}
+			case 'l': {
+				long l = va_arg(arg_list, long);
+				nbytes_writ += push_integer(l, buf + nbytes_writ);
+				break;
+			}
 			}
 			++at;
 		}
@@ -86,8 +99,6 @@ format_string(const char *fmt, va_list arg_list, char *buf)
 	}
 	return nbytes_writ;
 }
-
-//#define printf(fmt, ...) fprintf(stdout, fmt, ##__VA_ARGS__)
 
 void
 debug_print(const char *fmt, va_list args)
@@ -120,6 +131,26 @@ error(const char *file, int line, const char *func, bool abort, const char *fmt,
 	if (abort)
 		exit(1);
 }
+
+#define TIMED_BLOCK(name) Block_Timer __block_timer__##__LINE__(#name)
+struct Block_Timer {
+	Block_Timer(const char *n)
+	{
+		strcpy(name, n); 
+		start = platform_get_time();
+	}
+	~Block_Timer()
+	{
+		Platform_Time end = platform_get_time();
+		unsigned ns_res=1, mus_res=1000, ms_res=1000000;
+		long ns = platform_time_diff(start, end, ns_res);
+		long ms = platform_time_diff(start, end, ms_res);
+		long mus = platform_time_diff(start, end, mus_res);
+		debug_print("%s - %dns %dmus %dms\n", name, ns, mus, ms);
+	}
+	Platform_Time start;
+	char name[256];
+};
 
 bool
 get_base_name(const char *path, char *name_buf)

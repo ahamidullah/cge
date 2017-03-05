@@ -14,6 +14,7 @@ enum Key_Symbol {
 };
 
 struct File_Handle;
+struct Platform_Time;
 
 unsigned platform_keysym_to_scancode(Key_Symbol);
 void platform_exit();
@@ -29,5 +30,7 @@ char *platform_read_entire_file(const char *, Memory_Arena *);
 char *platform_get_memory(size_t);
 void platform_free_memory(void *, size_t);
 size_t platform_get_page_size();
+Platform_Time platform_get_time();
+long platform_time_diff(Platform_Time, Platform_Time, unsigned);
 
 #endif

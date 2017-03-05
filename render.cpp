@@ -1,21 +1,7 @@
+//#include <vector>
+//#include <unordered_map>
+//#include <string>
 /*
-#include <stdio.h>
-#include <GL/glew.h>
-#include <assert.h>
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
-#include <stdint.h>
-#include <stddef.h>
-
-#include "render.h"
-*/
-
-#include <vector>
-#include <unordered_map>
-#include <string>
-#define GLM_SWIZZLE
-#include <glm/gtc/type_ptr.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
@@ -31,6 +17,11 @@ namespace std {
 	using std::experimental::make_optional;
 	using std::experimental::nullopt;
 }
+*/
+
+#define GLM_SWIZZLE
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 constexpr int MAX_PT_LIGHTS = 4;
 constexpr int MAX_UI_VERTICES = 100;
@@ -55,26 +46,15 @@ struct Camera {
 };
 
 struct Untextured_Mesh {
-	Untextured_Mesh(GLuint ni, GLuint bv) : num_indices(ni), base_vertex(bv) {}
 	GLuint num_indices;
 	GLuint base_vertex;
 };
 
 struct Textured_Mesh {
-	Textured_Mesh(GLuint ni, GLuint bv, GLuint did, GLuint sid) : num_indices(ni), base_vertex(bv), diffuse_id(did), specular_id(sid) {}
 	GLuint num_indices;
 	GLuint base_vertex;
 	GLuint diffuse_id;
 	GLuint specular_id;
-};
-
-struct Model {
-	Model(GLuint pvao, GLuint pvbo) : vao(pvao), vbo(pvbo) {}
-	GLuint vao;
-	GLuint vbo;
-	std::vector<Textured_Mesh>   tex_meshes;
-	std::vector<Untextured_Mesh> notex_meshes;
-	std::vector<glm::mat4>       instances;
 };
 
 struct Model_Vertex {
@@ -149,6 +129,7 @@ struct Glyph_Info {
 	float advance;
 };
 
+/*
 struct Font_Info {
 	GLuint vao;
 	GLuint vbo;
@@ -157,27 +138,12 @@ struct Font_Info {
 	Array<Glyph_Vertex> vertices;
 	std::unordered_map<char, Glyph_Info> glyph_map;
 };
+*/
 
 struct Ubo_Ids {
 	GLuint matrices;
 	GLuint lights;
 };
-
-/*
-struct Raw_Mesh_Info {
-	Raw_Mesh_Info(GLuint ni, GLuint bv, std::optional<std::string> dp, std::optional<std::string> sp) : num_indices(ni), base_vertex(bv), diffuse_path(dp), specular_path(sp) {}
-	GLuint num_indices;
-	GLuint base_vertex;
-	std::optional<std::string> diffuse_path;
-	std::optional<std::string> specular_path;
-};
-
-struct Raw_Model {
-	std::vector<Raw_Mesh_Info> raw_mesh_infos;
-	std::vector<Model_Vertex> vertices;
-	std::vector<GLuint> indices;
-};
-*/
 
 struct Shader_Ids {
 	GLuint textured_mesh;
@@ -197,61 +163,49 @@ struct Model_Instance {
 	glm::mat4 pos;
 };
 
-struct Model_Table {
-	Memory_Arena model_data;
-	Memory_Arena mesh_textures;
-};
-
 struct Loaded_Assets {
-	Model_Table models;
+	void **lookup_table;
+	GLuint *mesh_textures;
+	Memory_Arena models;
 };
 
-struct Model_Instance_Table {
-	//Model_Instance *table[NUM_NODEL_IDS];
-	Memory_Arena instance_lists[NUM_MODEL_IDS];
-};
+Memory_Arena g_static_render_memory = mem_make_arena();
 
-inline Loaded_Assets
+Loaded_Assets
 init_assets()
 {
+	Asset_File_Header af_header;
+	File_Handle af_handle = platform_open_file("assets.ahh", "");
+	DEFER(platform_close_file(af_handle));
+	platform_read(af_handle, sizeof(Asset_File_Header), &af_header);
+
 	Loaded_Assets la;
-	la.models.model_data = mem_make_arena();
-	la.models.mesh_textures = mem_make_arena();
+	//la.num_assets = NUM_NAMED_ASSET_IDS + af_header.num_mesh_textures;
+	la.models = mem_make_arena();
+	// TODO: Need to zero out the mesh texture memory.
+	la.lookup_table = mem_alloc_array(void *, NUM_NAMED_ASSET_IDS + af_header.num_mesh_textures, &g_static_render_memory);
+	la.mesh_textures = mem_alloc_array(GLuint, af_header.num_mesh_textures, &g_static_render_memory);
 	return la;
 }
 
-inline Model_Instance_Table
-init_model_instances()
-{
-	Model_Instance_Table mit;
-	for (int i = 0; i < NUM_MODEL_IDS; ++i) {
-		mit.instance_lists[i] = mem_make_arena();
-	}
-	return mit;
-}
-
-void *asset_lookup_table[NUM_ASSET_IDS] = {};
 Loaded_Assets g_assets = init_assets();
 
 // TODO: Probably better to create one list of model instances. Each instance keeps its Model_ID and we just sort the list once when we start rendering.
 Memory_Arena g_model_instances[NUM_MODEL_IDS];
 
-static std::unordered_map<std::string, size_t> g_model_map;
-static std::unordered_map<std::string, GLuint> g_tex_map;
-static std::unordered_map<std::string, Font_Info> g_font_map;
-static std::vector<Model> g_models;
 static Shader_Ids g_shaders;
 static Lights g_lights;
 static Matrices g_matrices;
 static Ubo_Ids g_ubos;
 static UI_Render_Info g_ui_render_info;
 
-uint64_t
-get_tex_asset_id(uint64_t mtex_table_id)
+size_t
+get_mesh_tex_asset_id(size_t mtex_table_ind)
 {
-	return NUM_ASSET_IDS + mtex_table_id;
+	return NUM_NAMED_ASSET_IDS + mtex_table_ind;
 }
 
+/*
 std::optional<glm::vec3>
 raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Vec2i &screen_dim)
 {
@@ -270,6 +224,7 @@ raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const 
 	glm::vec3 pos = origin + world_ray * t;
 	return pos;
 }
+*/
 
 /*
 void
@@ -296,61 +251,6 @@ mk_point_light(glm::vec3 pos)
 }
 */
 
-
-/*
-static void
-process_node(aiNode* node, const aiScene* scene, Raw_Model *rm)
-{
-	for (unsigned m = 0; m < node->mNumMeshes; ++m) {
-		aiMesh* mesh = scene->mMeshes[node->mMeshes[m]];
-		// Assimp keeps track of indices per mesh, but we want them per model.
-		GLuint base_index = rm->vertices.size();
-		assert(mesh->HasPositions() && mesh->HasNormals() && mesh->HasFaces());
-		for (unsigned i = 0; i < mesh->mNumVertices; ++i) {
-			Model_Vertex v;
-			v.position[0] = mesh->mVertices[i].x;
-			v.position[1] = mesh->mVertices[i].y;
-			v.position[2] = mesh->mVertices[i].z;
-			if (mesh->mNormals) {
-				v.normal[0] = mesh->mNormals[i].x;
-				v.normal[1] = mesh->mNormals[i].y;
-				v.normal[2] = mesh->mNormals[i].z;
-			}
-			if (mesh->mTextureCoords[0]) {
-				v.uv[0] = mesh->mTextureCoords[0][i].x;
-				v.uv[1] = mesh->mTextureCoords[0][i].y;
-			}
-			rm->vertices.push_back(v);
-		}
-		int base_vertex = rm->indices.size();
-		int num_mesh_inds = 0;
-		for (unsigned i = 0; i < mesh->mNumFaces; ++i) {
-			aiFace face = mesh->mFaces[i];
-			assert(face.mNumIndices == 3);
-			num_mesh_inds += face.mNumIndices;
-			for (GLuint j = 0; j < face.mNumIndices; ++j) {
-				rm->indices.push_back(base_index + face.mIndices[j]);
-			}
-		}
-		// Doesn't handle multiple textures per mesh.
-		aiMaterial* mat = scene->mMaterials[mesh->mMaterialIndex];
-		aiString diffuse_path, specular_path;
-		aiReturn has_diffuse = mat->GetTexture(aiTextureType_DIFFUSE, 0, &diffuse_path);
-		aiReturn has_specular = mat->GetTexture(aiTextureType_SPECULAR, 0, &specular_path);
-		if (has_diffuse == AI_SUCCESS && has_specular == AI_SUCCESS)
-			rm->raw_mesh_infos.emplace_back(num_mesh_inds, base_vertex, diffuse_path.C_Str(), specular_path.C_Str());
-		else if (has_diffuse == AI_SUCCESS)
-			rm->raw_mesh_infos.emplace_back(num_mesh_inds, base_vertex, diffuse_path.C_Str(), std::nullopt);
-		else if (has_specular == AI_SUCCESS)
-			rm->raw_mesh_infos.emplace_back(num_mesh_inds, base_vertex, std::nullopt, specular_path.C_Str());
-		else
-			rm->raw_mesh_infos.emplace_back(num_mesh_inds, base_vertex, std::nullopt, std::nullopt);
-	}
-	for (unsigned i = 0; i < node->mNumChildren; ++i)
-		process_node(node->mChildren[i], scene, rm);
-}
-*/
-
 #define GL_CHECK_ERR(obj, ivfn, objparam, infofn, fmt, ...)\
 {\
 	GLint status;\
@@ -360,9 +260,9 @@ process_node(aiNode* node, const aiScene* scene, Raw_Model *rm)
 		ivfn(obj, GL_INFO_LOG_LENGTH, &infolog_len);\
 		GLchar *infolog = new GLchar [infolog_len + 1];\
 		infofn(obj, infolog_len, NULL, infolog);\
-		fprintf(stderr, "Error: ");\
-		fprintf(stderr, fmt, ## __VA_ARGS__);\
-		fprintf(stderr, " - %s\n", infolog);\
+		debug_print("Error: ");\
+		debug_print(fmt, ## __VA_ARGS__);\
+		debug_print(" - %s\n", infolog);\
 		delete infolog;\
 		exit(1);\
 	}\
@@ -410,6 +310,7 @@ make_gpu_program(const char *vert_src, const char *frag_src, const char *defines
 	return program;
 }
 
+/*
 static std::optional<GLuint>
 get_texture(std::string path, GLuint gl_tex_unit)
 {
@@ -442,12 +343,17 @@ get_texture(std::string path, GLuint gl_tex_unit)
 	g_tex_map[path] = tex_id;
 	return tex_id;
 }
+*/
 
 static GLuint
-get_tex_id(uint64_t mtex_table_id, GLuint gl_tex_unit)
+get_mesh_texture(uint64_t mtex_table_ind, GLuint gl_tex_unit)
 {
-	if (mtex_table_id == (uint64_t) -1)
+	if (mtex_table_ind == (uint64_t) -1)
 		return 0;
+
+	size_t asset_id = get_mesh_tex_asset_id(mtex_table_ind);
+	if (g_assets.lookup_table[asset_id])
+		return *(GLuint *)g_assets.lookup_table[asset_id];
 
 	GLuint tex_id;
 	glGenTextures(1, &tex_id);
@@ -457,7 +363,7 @@ get_tex_id(uint64_t mtex_table_id, GLuint gl_tex_unit)
 	DEFER(platform_close_file(af_handle));
 	platform_read(af_handle, sizeof(Asset_File_Header), &af_header);
 	uint64_t af_tex_offset;
-	platform_file_seek(af_handle, af_header.mesh_texture_table_offset + sizeof(uint64_t)*mtex_table_id);
+	platform_file_seek(af_handle, af_header.mesh_texture_table_offset + sizeof(uint64_t)*mtex_table_ind);
 	platform_read(af_handle, sizeof(uint64_t), &af_tex_offset);
 	platform_file_seek(af_handle, af_tex_offset);
 	uint8_t bytes_per_pixel;
@@ -468,7 +374,6 @@ get_tex_id(uint64_t mtex_table_id, GLuint gl_tex_unit)
 	platform_read(af_handle, sizeof(pitch), &pitch);
 	size_t nbytes = h * pitch;
 	char *pixels = (char *)malloc(nbytes);
-	printf("nbytes %d\n", nbytes);
 	platform_read(af_handle, nbytes, pixels);
 	GLint format = bytes_per_pixel == 4 ? GL_RGBA : GL_RGB;
 	glBindTexture(GL_TEXTURE_2D, tex_id);
@@ -481,43 +386,28 @@ get_tex_id(uint64_t mtex_table_id, GLuint gl_tex_unit)
 	glBindTexture(GL_TEXTURE_2D, 0);
 	free(pixels);
 
+	g_assets.mesh_textures[mtex_table_ind] = tex_id;
+	g_assets.lookup_table[asset_id] = &g_assets.mesh_textures[mtex_table_ind];
 	return tex_id;
 }
 
-#define GET_BASE_NAME(path) path.substr(path.find_last_of('/')+1, path.find_last_of('.') - (path.find_last_of('/')+1))
+//#define GET_BASE_NAME(path) path.substr(path.find_last_of('/')+1, path.find_last_of('.') - (path.find_last_of('/')+1))
 
 Model_Asset *
-load_model_from_disk(Model_ID id)
+get_model(Model_ID id)
 {
+	if (g_assets.lookup_table[id])
+		return (Model_Asset *)g_assets.lookup_table[id];
+	TIMED_BLOCK(load_model_from_disk);
 	// TODO: store this header instead of reading it in everytime.
 	Asset_File_Header af_header;
 	File_Handle af_handle = platform_open_file("assets.ahh", "");
 	DEFER(platform_close_file(af_handle));
 	platform_read(af_handle, sizeof(Asset_File_Header), &af_header);
 
-/*
-	std::vector<GLuint> vao_ids;
-	std::vector<GLuint> vbo_ids;
-	std::vector<GLuint> ebo_ids;
-
-	vao_ids.resize(NUM_ASSET_IDS);
-	vbo_ids.resize(NUM_ASSET_IDS);
-	ebo_ids.resize(NUM_ASSET_IDS);
-*/
-
-	//Model_Asset *model = 
-	// TODO: Worth it to load these up front?
-	/*
-	glGenVertexArrays(NUM_ASSET_IDS, vao_ids.data());
-	glGenBuffers(NUM_ASSET_IDS, vbo_ids.data());
-	glGenBuffers(NUM_ASSET_IDS, ebo_ids.data());
-	*/
-
-	//std::string paths[] = { "assets/models/nanosuit.obj" };
 	Memory_Arena load_arena = mem_make_arena();
 	uint64_t af_model_ofs, num_verts, num_indices, num_meshes; 
-	//for (int i = 0; i < NUM_ASSET_IDS; ++i) {
-	platform_file_seek(af_handle, af_header.asset_offsets[id]);
+	platform_file_seek(af_handle, af_header.named_asset_offsets[id]);
 	platform_read(af_handle, sizeof(uint64_t), &num_verts);
 	float *vert_buf = mem_alloc_array(float, num_verts, &load_arena);
 	platform_read(af_handle, sizeof(uint64_t), &num_indices);
@@ -526,19 +416,18 @@ load_model_from_disk(Model_ID id)
 	platform_read(af_handle, sizeof(GLuint)*num_indices, ind_buf);
 	platform_read(af_handle, sizeof(uint64_t), &num_meshes);
 
-	Model_Asset *model = (Model_Asset *)mem_push(sizeof(Model_Asset) + (sizeof(Textured_Mesh)*num_meshes), &g_assets.models.model_data);
+	Model_Asset *model = (Model_Asset *)mem_push(sizeof(Model_Asset) + (sizeof(Textured_Mesh)*num_meshes), &g_assets.models);
 	model->num_meshes = num_meshes;
 
 	for (int i = 0; i < num_meshes; ++i) {
 		// TODO: Should these be 32 bit or 64 bit?
-		//uint64_t mesh_num_indices, mesh_base_vert, diffuse_asset_id, specular_asset_id;
-		uint64_t diffuse_asset_id, specular_asset_id;
+		uint64_t diff_index, spec_index;
 		platform_read(af_handle, sizeof(uint64_t), &model->meshes[i].num_indices);
 		platform_read(af_handle, sizeof(uint64_t), &model->meshes[i].base_vertex);
-		platform_read(af_handle, sizeof(uint64_t), &specular_asset_id);
-		platform_read(af_handle, sizeof(uint64_t), &diffuse_asset_id);
-		model->meshes[i].specular_id = get_tex_id(specular_asset_id, GL_TEXTURE1);
-		model->meshes[i].diffuse_id = get_tex_id(diffuse_asset_id, GL_TEXTURE0);
+		platform_read(af_handle, sizeof(uint64_t), &spec_index);
+		platform_read(af_handle, sizeof(uint64_t), &diff_index);
+		model->meshes[i].specular_id = get_mesh_texture(spec_index, GL_TEXTURE1);
+		model->meshes[i].diffuse_id = get_mesh_texture(diff_index, GL_TEXTURE0);
 /*
 		if (diffuse_asset_id == (uint64_t)-1) {
 			g_models.back().notex_meshes.emplace_back(mesh_num_indices, mesh_base_vert);
@@ -550,6 +439,7 @@ load_model_from_disk(Model_ID id)
 */
 	}
 
+	// TODO: Worth it to load these up front?
 	GLuint ebo;
 	glGenVertexArrays(1, &model->vao);
 	glGenBuffers(1, &model->vbo);
@@ -631,18 +521,21 @@ load_model_from_disk(Model_ID id)
 	}
 */
 	glBindVertexArray(0);
+	g_assets.lookup_table[id] = model;
 	return model;
 }
 
+/*
 Model_Asset *
 get_model(Model_ID id)
 {
-	if (asset_lookup_table[id])
-		return (Model_Asset *)asset_lookup_table[id];
+	if (g_assets.lookup_table[id])
+		return (Model_Asset *)g_assets.lookup_table[id];
 	Model_Asset *m = load_model_from_disk(id);
-	asset_lookup_table[id] = m;
+	g_assets.lookup_table[id] = m;
 	return m;
 }
+*/
 
 /*
 // Font texture packing.
@@ -786,7 +679,6 @@ render_update_projection(const Camera &cam, const V2u &screen_dim)
 void
 render_init(const Camera &cam, const V2u &screen_dim)
 {
-	//IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG);
 	glEnable(GL_DEPTH_TEST);
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 	glViewport(0, 0, screen_dim.x, screen_dim.y);
@@ -1009,27 +901,6 @@ render_sim()
 			}
 		}
 	}
-	/*
-	for (const auto &model : g_models) {
-		glBindVertexArray(model.vao);
-		glBindBuffer(GL_ARRAY_BUFFER, model.vbo);
-		for (const auto &instance : model.instances) {
-			glUseProgram(g_shaders.textured_mesh);
-			glUniformMatrix4fv(tex_model_loc, 1, GL_FALSE, glm::value_ptr(instance));
-			for (const auto &mesh : model.tex_meshes) {
-				glActiveTexture(GL_TEXTURE0);
-				glBindTexture(GL_TEXTURE_2D, mesh.diffuse_id);
-				glActiveTexture(GL_TEXTURE1);
-				glBindTexture(GL_TEXTURE_2D, mesh.specular_id);
-				glDrawElements(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, (GLvoid *)(mesh.base_vertex * sizeof(GLuint)));
-			}
-			glUseProgram(g_shaders.untextured_mesh);
-			glUniformMatrix4fv(notex_model_loc, 1, GL_FALSE, glm::value_ptr(instance));
-			for (const auto &mesh : model.notex_meshes)
-				glDrawElements(GL_TRIANGLES, mesh.num_indices, GL_UNSIGNED_INT, (GLvoid *)(mesh.base_vertex * sizeof(GLuint)));
-		}
-	}
-	*/
 }
 
 /*
