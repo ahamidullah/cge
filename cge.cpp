@@ -1,8 +1,7 @@
-//#include <stdio.h>
-#include <stdlib.h>
+//#include <stdlib.h>
 #include <stdint.h>
 #include <assert.h>
-#include <string.h>
+//#include <string.h>
 #include <stdarg.h>
 
 #include "asset_ids.h"
@@ -135,7 +134,7 @@ handle_events(Keyboard *kb, Mouse *m, const Vec2i &screen_dim, const Camera &cam
 */
 
 void
-main_loop(V2u screen_dim)
+main_loop(Vec2u screen_dim)
 {
 	Camera cam = { 0.0f, 0.0f, 1.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 45.0f, 0.1f, 100.0f };
 	cam.pos -= 50.0f*cam.front;
@@ -143,7 +142,7 @@ main_loop(V2u screen_dim)
 	Input input;
 	input.mouse = { {screen_dim.x/2, screen_dim.y/2}, {0, 0}, 0.1f, 0 };
 	input.keyboard = { {0}, {0} };
-	V2f a = {1.0f, 2.0f};
+	Vec2f a = {1.0f, 2.0f};
 	a *= 4.0f;
 	//printf("%d %d\n", (int)a.x, (int)a.y);
 
@@ -155,6 +154,7 @@ main_loop(V2u screen_dim)
 	//unsigned next_tick = SDL_GetTicks();
 	render_init(cam, screen_dim);
 	render_add_instance(NANOSUIT_MODEL, glm::vec3(0.0f, 0.0f, 0.0f));
+	render_add_instance(NANOSUIT_MODEL, glm::vec3(5.0f, 0.0f, 0.0f));
 
 	/*
 	auto set_bind_pt = [](const GLuint program, const char *name, const GLuint bind_pt) {

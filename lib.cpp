@@ -26,17 +26,34 @@ make_scope_exit(F f)
 
 #define DEFER(code) auto scope_exit_##__LINE__ = make_scope_exit([=](){code;})
 
+/*
+void
+strncpy(char *dest, const char *src, size_t n)
+{
+	while (*src && n > 0) {
+		*dest++ = *src++;
+		--n;
+	}
+	while (n > 0) {
+		*dest++ = 0;
+		--n;
+	}
+}
+*/
+
 void
 strcpy(char *dest, char *src)
 {
-	while(*src)
+	while (*src) {
 		*dest++ = *src++;
+	}
+	*dest = '\0';
 }
 
 void
 strrev(char *start, char *end)
 {
-	while(start < end) {
+	while (start < end) {
 		char tmp = *start;
 		*start++ = *end;
 		*end-- = tmp;
@@ -57,7 +74,7 @@ push_integer(int i, char *buf)
 		buf[nbytes_writ++] = ascii;
 		i /= 10;
 	} while (i > 0);
-	char *end = buf + nbytes_writ;
+	char *end = buf + nbytes_writ - 1;
 	strrev(start, end);
 	return nbytes_writ;
 }
@@ -129,29 +146,31 @@ error(const char *file, int line, const char *func, bool abort, const char *fmt,
 	va_end(args);
 	debug_print("\n");
 	if (abort)
-		exit(1);
+		_exit(1);
 }
 
 #define TIMED_BLOCK(name) Block_Timer __block_timer__##__LINE__(#name)
+
 struct Block_Timer {
-	Block_Timer(const char *n)
+	Block_Timer(char *n)
 	{
-		strcpy(name, n); 
+		strcpy(name, n);
 		start = platform_get_time();
 	}
 	~Block_Timer()
 	{
 		Platform_Time end = platform_get_time();
-		unsigned ns_res=1, mus_res=1000, ms_res=1000000;
+		unsigned ns_res=1, us_res=1000, ms_res=1000000;
 		long ns = platform_time_diff(start, end, ns_res);
 		long ms = platform_time_diff(start, end, ms_res);
-		long mus = platform_time_diff(start, end, mus_res);
-		debug_print("%s - %dns %dmus %dms\n", name, ns, mus, ms);
+		long us = platform_time_diff(start, end, us_res);
+		debug_print("%s - %dns %dus %dms\n", name, ns, us, ms);
 	}
 	Platform_Time start;
 	char name[256];
 };
 
+/*
 bool
 get_base_name(const char *path, char *name_buf)
 {
@@ -164,8 +183,10 @@ get_base_name(const char *path, char *name_buf)
 	while(path[end] && path[end] != '.')
 		++end;
 	strncpy(name_buf, path+begin, end-begin);
+	name_buf[end-begin] = '\0';
 	return true;
 }
+*/
 
 // Array
 template <typename T>

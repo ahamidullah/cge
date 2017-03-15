@@ -14,8 +14,8 @@ enum Mouse_Buttons {
 };
 
 struct Mouse {
-	V2i pos;
-	V2i motion;
+	Vec2i pos;
+	Vec2i motion;
 	float sensitivity;
 	unsigned char buttons;
 };

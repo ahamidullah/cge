@@ -57,9 +57,6 @@ mem_make_block()
 inline Memory_Arena
 mem_make_arena()
 {
-	//assert((flags & STATIC_ARENA) || (flags & DYNAMIC_ARENA));
-	//assert(!((flags & STATIC_ARENA) && (flags & DYNAMIC_ARENA)));
-	//assert(!((flags & STATIC_ARENA) && (static_size == 0)))
 	Memory_Arena m;
 	m.entry_free_head = NULL;
 	m.last_entry = NULL;
@@ -94,23 +91,6 @@ mem_destroy_arena(const Memory_Arena *ma)
 void
 mem_reverse(Arena_Address *start, Arena_Address *end, Memory_Arena *ma)
 {
-/*
-	char *start = (char *)start_v, *end = (char *)end_v;
-	intptr_t start_blk_num = (start - get_block_start(ma->base)) / BLOCK_DATA_PLUS_FOOTER_SIZE;
-	Block_Footer *start_footer = ma->base;
-	for (intptr_t i = start_blk_num; i > 0; --i) {
-		assert(start_footer && start_footer->next);
-		start_footer = start_footer->next;
-	}
-	assert(start >= get_block_start(start_footer) && start < (char *)start_footer);
-	intptr_t end_blk_num = (end - get_block_start(ma->base)) / BLOCK_DATA_PLUS_FOOTER_SIZE;
-	intptr_t blk_num_diff = end_blk_num - start_blk_num;
-	Block_Footer *end_footer = start_footer;
-	for (intptr_t i = blk_num_diff; i > 0; --i) {
-		assert(end_footer && end_footer->next);
-		end_footer = end_footer->next;
-	}
-*/
 	assert(start->byte_addr >= get_block_start(start->block_footer) && start->byte_addr < (char *)start->block_footer);
 	assert(end->byte_addr >= get_block_start(end->block_footer) && end->byte_addr < (char *)end->block_footer);
 
@@ -142,17 +122,7 @@ mem_reverse(Arena_Address *start, Arena_Address *end, Memory_Arena *ma)
 	}
 }
 
-/*
-// One byte past the last byte written.
-Arena_Address
-mem_end(Memory_Arena *ma)
-{
-	assert(ma->active_block->nbytes_used < BLOCK_DATA_SIZE);
-	return { get_block_start(ma->active_block) + ma->active_block->nbytes_used, ma->active_block };
-}
-*/
-
-inline void *
+inline char *
 get_entry_data(Entry_Header *e)
 {
 	return (char *)e + sizeof(Entry_Header);
@@ -167,6 +137,7 @@ get_entry_header(void *p)
 void *
 mem_start(Memory_Arena *ma)
 {
+	// TODO: It's actually not. Need to make it so that we don't get a block on startup incase the first allocation is bigger than one block.
 	if (ma->last_entry) // Do we have any entries? If we do, it's guarenteed that the first one is right at the start of the base block.
 		return get_entry_data((Entry_Header *)get_block_start(ma->base));
 	return NULL;
@@ -243,26 +214,29 @@ mem_push(size_t size, Memory_Arena *ma)
 		}
 	}
 	*/
-	Entry_Header *new_entry;
+	Entry_Header *new_entry_header;
 	if (size_with_header <= (ma->active_block->capacity - ma->active_block->nbytes_used))
-		new_entry = (Entry_Header *)get_block_start(ma->active_block) + ma->active_block->nbytes_used;
+		new_entry_header = (Entry_Header *)(get_block_start(ma->active_block) + ma->active_block->nbytes_used);
 	else { // Need a new block.
 		mem_arena_add_block(ma);
-		new_entry = (Entry_Header *)get_block_start(ma->active_block);
+		new_entry_header = (Entry_Header *)get_block_start(ma->active_block);
 	}
 
-	new_entry->size = size;
-	new_entry->next = NULL;
-	new_entry->prev = ma->last_entry;
-	if (ma->last_entry)
-		ma->last_entry->next = new_entry;
+	char *new_entry = get_entry_data(new_entry_header);
+	new_entry_header->size = size;
+	new_entry_header->next = NULL;
+	new_entry_header->prev = ma->last_entry;
+	if (ma->last_entry) {
+		Entry_Header *last_entry_header = get_entry_header(ma->last_entry);
+		last_entry_header->next = new_entry;
+	}
 
 	ma->last_entry = new_entry;
 	ma->active_block->nbytes_used += size_with_header;
 	// If we fill up the block exactly, we get a new one right away.
 	if (ma->active_block->nbytes_used == ma->active_block->capacity)
 		mem_arena_add_block(ma);
-	return (char *)new_entry + sizeof(Entry_Header);
+	return new_entry;
 }
 
 void

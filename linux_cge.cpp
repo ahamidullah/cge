@@ -98,7 +98,7 @@ int
 main()
 {
 	GLXFBConfig fbconfig;
-	V2u screen_dim { 800, 600 };
+	Vec2u screen_dim { 800, 600 };
 
 	// create window
 	{
@@ -253,7 +253,7 @@ void
 platform_update_mouse(Mouse *m)
 {
 	Window root, child;
-	V2i root_pos, mpos;
+	Vec2i root_pos, mpos;
 	unsigned mbuttons_and_key_modifiers;
 	XQueryPointer(g_pctx.display, g_pctx.window, &root, &child, &root_pos.x, &root_pos.y, &mpos.x, &mpos.y, &mbuttons_and_key_modifiers);
 	m->motion = mpos - m->pos;

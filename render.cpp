@@ -206,12 +206,20 @@ get_mesh_tex_asset_id(size_t mtex_table_ind)
 }
 
 /*
-std::optional<glm::vec3>
-raycast_plane(const glm::vec2 &screen_ray, const glm::vec3 &plane_normal, const glm::vec3 &origin, const float origin_ofs, const Vec2i &screen_dim)
+V3f
+screen_to_world_ray(V2u screen_pos, V2i screen_dim)
 {
-	float x = (2.0f * screen_ray.x) / screen_dim.x - 1.0f;
-	float y = 1.0f - (2.0f * screen_ray.y) / screen_dim.y;
-	glm::vec4 clip_ray = glm::vec4(x, y, -1.0f, 1.0f);
+	float x = (2.0f * screen_pos.x) / screen_dim.x - 1.0f;
+	float y = 1.0f - (2.0f * screen_pos.y) / screen_dim.y;
+	Vec4f clip_ray = { x, y, -1.0f, 1.0f }; // OpenGL specific, -1 is away from the screen.
+	inverse(g_matrices.view * g_matrices.perspective_proj);
+}
+*/
+
+/*
+V3f
+raycast_plane_intersect(const V2u &screen_ray, const V3f &plane_normal, const V3f &origin, const float origin_ofs, const V2i &screen_dim)
+{
 	glm::vec4 eye_ray = glm::inverse(g_matrices.perspective_proj) * clip_ray;
 	eye_ray = glm::vec4(eye_ray.x, eye_ray.y, -1.0f, 0.0f);
 	glm::vec3 world_ray = glm::normalize((glm::inverse(g_matrices.view) * eye_ray).xyz());
@@ -591,33 +599,37 @@ void
 render_update_view(const Camera &cam)
 {
 	g_matrices.view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
+	Mat4 test = view_matrix({ cam.pos.x, cam.pos.y, cam.pos.z }, { cam.front.x, cam.front.y, cam.front.z });
+
 	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
-	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, view), sizeof(g_matrices.view), glm::value_ptr(g_matrices.view));
+	//glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, view), sizeof(g_matrices.view), glm::value_ptr(g_matrices.view));
+	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, view), sizeof(g_matrices.view), &test);
 	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
 	// TODO: We could split this function up and avoid updating the view pos when only our facing direction changes
 	glUseProgram(g_shaders.textured_mesh);
 	glUniform3f(glGetUniformLocation(g_shaders.textured_mesh, "u_view_pos"), cam.pos.x, cam.pos.y, cam.pos.z);
 	glUseProgram(0);
-
 }
 
 void
-render_update_projection(const Camera &cam, const V2u &screen_dim)
+render_update_projection(const Camera &cam, const Vec2u &screen_dim)
 {
 	g_matrices.perspective_proj = glm::perspective(cam.fov, (float)screen_dim.x / (float)screen_dim.y, cam.near, cam.far);
+	//g_matrices.perspective_proj = perspective_matrix(cam.fov, (float)screen_dim.x / (float)screen_dim.y, cam.near, cam.far);
 	g_matrices.ortho_proj = glm::ortho(0.0f, 100.0f, 100.0f, 0.0f);
 	//g_matrices.ortho_proj = glm::ortho(0.0f, (float)screen_dim.x, (float)screen_dim.y, 0.0f);
 	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
 	// TODO: We could combine these calls (will break if Matrices changes)
-	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, perspective_proj), sizeof(g_matrices.perspective_proj), glm::value_ptr(g_matrices.perspective_proj));
+	//glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, perspective_proj), sizeof(g_matrices.perspective_proj), glm::value_ptr(g_matrices.perspective_proj));
+	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, perspective_proj), sizeof(g_matrices.perspective_proj), &g_matrices.perspective_proj);
 	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, ortho_proj), sizeof(g_matrices.ortho_proj), glm::value_ptr(g_matrices.ortho_proj));
 	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
 
 // Init.
 void
-render_init(const Camera &cam, const V2u &screen_dim)
+render_init(const Camera &cam, const Vec2u &screen_dim)
 {
 	glEnable(GL_DEPTH_TEST);
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -655,12 +667,13 @@ render_init(const Camera &cam, const V2u &screen_dim)
 		set_bind_pt(g_shaders.ui, "Matrices", 0);
 		glGenBuffers(1, &g_ubos.matrices);
 
+		glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
+		glBufferData(GL_UNIFORM_BUFFER, sizeof(Matrices), 0, GL_STATIC_DRAW);
+		//glBindBuffer(GL_UNIFORM_BUFFER, 0);
+		glBindBufferBase(GL_UNIFORM_BUFFER, 0, g_ubos.matrices);
+
 		render_update_view(cam);
 		render_update_projection(cam, screen_dim);
-		glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
-		glBufferData(GL_UNIFORM_BUFFER, sizeof(Matrices), &g_matrices, GL_STATIC_DRAW);
-		glBindBuffer(GL_UNIFORM_BUFFER, 0);
-		glBindBufferBase(GL_UNIFORM_BUFFER, 0, g_ubos.matrices);
 	}
 
 	// init light ubo

@@ -24,15 +24,16 @@ struct Free_Entry {
 	Free_Entry *next;
 };
 
+// Points to the start of the next and prev entry data.
 struct Entry_Header {
 	size_t size;
-	Entry_Header *next;
-	Entry_Header *prev;
+	char *next;
+	char *prev;
 };
 
 struct Memory_Arena {
 	Free_Entry *entry_free_head;
-	Entry_Header *last_entry;
+	char *last_entry;
 	Block_Footer *base;
 	Block_Footer *active_block;
 };
