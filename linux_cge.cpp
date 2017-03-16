@@ -16,9 +16,9 @@
 #include "glprocs.h"
 #undef DEFINEPROC
 
-#define stdout 1
-#define stdin 0
-#define stderr 2
+//#define stdout 1
+//#define stdin 0
+//#define stderr 2
 
 enum Linux_Key_Symbols {
 	PLATFORM_W_KEY = XK_w,
@@ -98,7 +98,7 @@ int
 main()
 {
 	GLXFBConfig fbconfig;
-	Vec2u screen_dim { 800, 600 };
+	Vec2u screen_dim { 1600, 1200 };
 
 	// create window
 	{
@@ -199,7 +199,7 @@ main()
 
 		const char *gl_exts = glXQueryExtensionsString(g_pctx.display, XDefaultScreen(g_pctx.display));
 		if (!is_ext_supported(gl_exts, "GLX_ARB_create_context"))
-			zabort("OpenGL does not support glXCreateCOntextAttribsARB extension");
+			zabort("OpenGL does not support glXCreateContextAttribsARB extension");
 
 		int context_attribs[] = {
 			GLX_CONTEXT_MAJOR_VERSION_ARB, 3,
@@ -238,7 +238,7 @@ platform_exit()
 	glXDestroyContext(g_pctx.display, g_pctx.gl_context);
 	XDestroyWindow(g_pctx.display, g_pctx.window);
 	XCloseDisplay(g_pctx.display);
-	exit(0);
+	_exit(0);
 }
 
 void input_key_down(Keyboard *, unsigned);

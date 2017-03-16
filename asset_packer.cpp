@@ -32,9 +32,9 @@ struct Model_Vertex {
 };
 
 struct Raw_Mesh_Info {
-	Raw_Mesh_Info(uint64_t ni, uint64_t bv, std::optional<std::string> dp, std::optional<std::string> sp) : num_indices(ni), base_vertex(bv), diffuse_path(dp), specular_path(sp) {}
-	uint64_t num_indices;
-	uint64_t base_vertex;
+	Raw_Mesh_Info(uint32_t ni, uint32_t bv, std::optional<std::string> dp, std::optional<std::string> sp) : num_indices(ni), base_vertex(bv), diffuse_path(dp), specular_path(sp) {}
+	uint32_t num_indices;
+	uint32_t base_vertex;
 	std::optional<std::string> diffuse_path;
 	std::optional<std::string> specular_path;
 };
@@ -42,8 +42,7 @@ struct Raw_Mesh_Info {
 struct Raw_Model {
 	std::vector<Raw_Mesh_Info> raw_mesh_infos;
 	std::vector<Model_Vertex> vertices;
-	// TODO: make the indices a uint64_t instead of an unsigned.
-	std::vector<unsigned> indices;
+	std::vector<uint32_t> indices;
 };
 
 static void
@@ -107,14 +106,14 @@ ID_To_Filename model_map[] = {
 	{ NANOSUIT_MODEL, "nanosuit.obj"},
 };
 
-std::map<std::string, uint64_t> texture_map;
+std::map<std::string, uint32_t> texture_map;
 
 // TODO: This won't work for large file (>2GB). ftell might not work properly with file larger than 2GB because it returns a signed long as the offset.
 // Might have to use some OS specific offset query function.
 int
 main(int argc, char **argv)
 {
-	uint64_t num_textures_in_file = 0;
+	uint32_t num_textures_in_file = 0;
 	FILE *file = fopen("assets.ahh", "wb");
 	fseek(file, sizeof(Asset_File_Header), SEEK_CUR);
 
@@ -135,16 +134,16 @@ main(int argc, char **argv)
 		process_assimp_node(scene->mRootNode, scene, &rm);
 		header.named_asset_offsets[model_map[i].id] = ftell(file);
 
-		uint64_t num_verts = rm.vertices.size(), num_inds = rm.indices.size(), num_meshes = rm.raw_mesh_infos.size(), no_tex = (uint64_t) -1;
+		uint32_t num_verts = rm.vertices.size(), num_inds = rm.indices.size(), num_meshes = rm.raw_mesh_infos.size(), no_tex = (uint32_t) -1;
 		printf("%d %d %d\n", num_verts, num_inds, num_meshes);
-		fwrite(&num_verts, sizeof(uint64_t), 1, file);
-		fwrite(&num_inds, sizeof(uint64_t), 1, file);
+		fwrite(&num_verts, sizeof(uint32_t), 1, file);
+		fwrite(&num_inds, sizeof(uint32_t), 1, file);
 		fwrite(rm.vertices.data(), sizeof(Model_Vertex), rm.vertices.size(), file);
 		fwrite(rm.indices.data(), sizeof(unsigned), rm.indices.size(), file);
-		fwrite(&num_meshes, sizeof(uint64_t), 1, file);
+		fwrite(&num_meshes, sizeof(uint32_t), 1, file);
 		for (size_t j = 0; j < num_meshes; ++j) {
-			fwrite(&rm.raw_mesh_infos[j].num_indices, sizeof(uint64_t), 1, file);
-			fwrite(&rm.raw_mesh_infos[j].base_vertex, sizeof(uint64_t), 1, file);
+			fwrite(&rm.raw_mesh_infos[j].num_indices, sizeof(uint32_t), 1, file);
+			fwrite(&rm.raw_mesh_infos[j].base_vertex, sizeof(uint32_t), 1, file);
 			printf("%d %d\n", rm.raw_mesh_infos[j].num_indices, rm.raw_mesh_infos[j].base_vertex);
 			// TODO: Loop over all the textures we want to check for.
 			if (rm.raw_mesh_infos[j].specular_path) {
@@ -152,23 +151,23 @@ main(int argc, char **argv)
 				auto it = texture_map.find(*rm.raw_mesh_infos[j].specular_path);
 				if (it == texture_map.end()) {
 					texture_map[*rm.raw_mesh_infos[j].specular_path] = num_textures_in_file;
-					fwrite(&num_textures_in_file, sizeof(uint64_t), 1, file);
+					fwrite(&num_textures_in_file, sizeof(uint32_t), 1, file);
 					++num_textures_in_file;
 				} else
-					fwrite(&it->second, sizeof(uint64_t), 1, file);
+					fwrite(&it->second, sizeof(uint32_t), 1, file);
 			} else // No texture available.
-				fwrite(&no_tex, sizeof(uint64_t), 1, file);
+				fwrite(&no_tex, sizeof(uint32_t), 1, file);
 			if (rm.raw_mesh_infos[j].diffuse_path) {
 				printf("Using diffuse texture %s\n", rm.raw_mesh_infos[j].diffuse_path->c_str());
 				auto it = texture_map.find(*rm.raw_mesh_infos[j].diffuse_path);
 				if (it == texture_map.end()) {
 					texture_map[*rm.raw_mesh_infos[j].diffuse_path] = num_textures_in_file;
-					fwrite(&num_textures_in_file, sizeof(uint64_t), 1, file);
+					fwrite(&num_textures_in_file, sizeof(uint32_t), 1, file);
 					++num_textures_in_file;
 				} else
-					fwrite(&it->second, sizeof(uint64_t), 1, file);
+					fwrite(&it->second, sizeof(uint32_t), 1, file);
 			} else // No texture available.
-				fwrite(&no_tex, sizeof(uint64_t), 1, file);
+				fwrite(&no_tex, sizeof(uint32_t), 1, file);
 		}
 		rm.vertices.clear();
 		rm.indices.clear();
@@ -181,8 +180,8 @@ main(int argc, char **argv)
 	header.mesh_texture_table_offset = ftell(file);
 	fpos_t tex_table_pos;
 	fgetpos(file, &tex_table_pos);
-	uint64_t *tex_table_header = (uint64_t *)malloc(sizeof(num_textures_in_file) * sizeof(uint64_t));
-	fseek(file, num_textures_in_file * sizeof(uint64_t), SEEK_CUR);
+	uint32_t *tex_table_header = (uint32_t *)malloc(num_textures_in_file * sizeof(uint32_t));
+	fseek(file, num_textures_in_file * sizeof(uint32_t), SEEK_CUR);
 	for (auto itr : texture_map) {
 		SDL_Surface *tex;
 		if (!(tex = IMG_Load(itr.first.c_str()))) {
@@ -200,7 +199,7 @@ main(int argc, char **argv)
 
 	// Write tex table header.
 	fsetpos(file, &tex_table_pos);
-	fwrite(tex_table_header, sizeof(uint64_t), num_textures_in_file, file);
+	fwrite(tex_table_header, sizeof(uint32_t), num_textures_in_file, file);
 
 	// Write asset file header.
 	fseek(file, 0, SEEK_SET);

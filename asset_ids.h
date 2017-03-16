@@ -27,7 +27,7 @@ enum Named_Asset_IDs {
 //#pragma pack(1)
 struct Asset_File_Header {
 	long named_asset_offsets[NUM_NAMED_ASSET_IDS];
-	long num_mesh_textures;
+	uint32_t num_mesh_textures;
 	long mesh_texture_table_offset; // We don't give each mesh texture it's own Asset_ID since we won't be referencing it directly.
 };
 //#pragma pack(pop)

@@ -24,22 +24,50 @@ make_scope_exit(F f)
 	return Scope_Exit<F>(f);
 }
 
-#define DEFER(code) auto scope_exit_##__LINE__ = make_scope_exit([=](){code;})
+#define DO_STRING_JOIN(arg1, arg2) arg1 ## arg2
+#define STRING_JOIN(arg1, arg2) DO_STRING_JOIN(arg1, arg2)
+#define DEFER(code) auto STRING_JOIN(scope_exit_, __LINE__) = make_scope_exit([=](){code;})
 
-/*
-void
-strncpy(char *dest, const char *src, size_t n)
+const char *
+strchr(const char *s, char c)
 {
-	while (*src && n > 0) {
-		*dest++ = *src++;
-		--n;
-	}
-	while (n > 0) {
-		*dest++ = 0;
-		--n;
-	}
+	while (*s && *s != c)
+		s++;
+	if (*s == c)
+		return s;
+	return NULL;
 }
-*/
+
+// "Naive" approach. We don't use this for anthing perf critical now.
+const char *
+strstr(const char *s, const char *substring)
+{
+	while (*s) {
+		const char *subs = substring;
+		if (*s != *subs) {
+			++s;
+			continue;
+		}
+
+		const char *sstart = s;
+		while (*subs && *sstart && *sstart == *subs) {
+			sstart++; subs++;
+		}
+		if (*subs == '\0')
+			return s;
+		++s;
+	}
+	return NULL;
+}
+
+size_t
+strlen(const char *s)
+{
+	size_t count = 0;
+	while (*s++)
+		++count;
+	return count;
+}
 
 void
 strcpy(char *dest, char *src)

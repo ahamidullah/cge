@@ -1,28 +1,3 @@
-//#include <vector>
-//#include <unordered_map>
-//#include <string>
-/*
-#include <assimp/Importer.hpp>
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
-#include <ft2build.h>
-#include FT_FREETYPE_H  
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
-
-#include <experimental/optional>
-
-namespace std {
-	using std::experimental::optional;
-	using std::experimental::make_optional;
-	using std::experimental::nullopt;
-}
-*/
-
-#define GLM_SWIZZLE
-#include <glm/gtc/type_ptr.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-
 constexpr int MAX_PT_LIGHTS = 4;
 constexpr int MAX_UI_VERTICES = 100;
 constexpr int MAX_GLYPH_VERTICES = 1000;
@@ -36,9 +11,9 @@ struct Camera {
 	float pitch;
 	float yaw;
 	float speed;
-	glm::vec3 pos;
-	glm::vec3 front;
-	glm::vec3 up;
+	Vec3f pos;
+	Vec3f front;
+	Vec3f up;
 
 	float fov;
 	float near;
@@ -64,19 +39,31 @@ struct Model_Vertex {
 };
 
 struct Dir_Light {
+/*
 	glm::vec4 direction;
 	glm::vec4 ambient;
 	glm::vec4 diffuse;
 	glm::vec4 specular;
+*/
+	Vec4f direction;
+	Vec4f ambient;
+	Vec4f diffuse;
+	Vec4f specular;
 };
 
 struct Spot_Light {
 	// TODO: pack the floats into the last component of the glm::vec4
-	glm::vec4 position;
-	glm::vec4 direction;
-	glm::vec4 ambient;
-	glm::vec4 diffuse;
-	glm::vec4 specular;
+	//glm::vec4 position;
+	//glm::vec4 direction;
+	//glm::vec4 ambient;
+	//glm::vec4 diffuse;
+	//glm::vec4 specular;
+
+	Vec4f position;
+	Vec4f direction;
+	Vec4f ambient;
+	Vec4f diffuse;
+	Vec4f specular;
 
 	float outer_cutoff;
 	float inner_cutoff;
@@ -86,10 +73,16 @@ struct Spot_Light {
 };
 
 struct Point_Light {    
+/*
 	glm::vec4 position;
 	glm::vec4 ambient;
 	glm::vec4 diffuse;
 	glm::vec4 specular;
+	*/
+	Vec4f position;
+	Vec4f ambient;
+	Vec4f diffuse;
+	Vec4f specular;
 	float constant;
 	float linear;
 	float quadratic;
@@ -101,9 +94,9 @@ struct Point_Light {
 // CPU copy of matrix struct ubo on GPU.
 // Order and alignment have to match!
 struct Matrices {
-	glm::mat4 view;
-	glm::mat4 perspective_proj;
-	glm::mat4 ortho_proj;
+	Mat4 view;
+	Mat4 perspective_proj;
+	Mat4 ortho_proj;
 };
 
 // Cpu copy of frag shader ubo light structures.
@@ -160,7 +153,8 @@ struct Model_Asset {
 };
 
 struct Model_Instance {
-	glm::mat4 pos;
+	//glm::mat4 pos;
+	Mat4 pos;
 };
 
 struct Loaded_Assets {
@@ -272,7 +266,7 @@ mk_point_light(glm::vec3 pos)
 		debug_print(fmt, ## __VA_ARGS__);\
 		debug_print(" - %s\n", infolog);\
 		delete infolog;\
-		exit(1);\
+		_exit(1);\
 	}\
 }
 
@@ -353,10 +347,13 @@ get_texture(std::string path, GLuint gl_tex_unit)
 }
 */
 
+// @TEMP
+#include <stdlib.h>
+
 static GLuint
-get_mesh_texture(uint64_t mtex_table_ind, GLuint gl_tex_unit)
+get_mesh_texture(uint32_t mtex_table_ind, GLuint gl_tex_unit, Memory_Arena *arena)
 {
-	if (mtex_table_ind == (uint64_t) -1)
+	if (mtex_table_ind == (uint32_t) -1)
 		return 0;
 
 	size_t asset_id = get_mesh_tex_asset_id(mtex_table_ind);
@@ -370,9 +367,9 @@ get_mesh_texture(uint64_t mtex_table_ind, GLuint gl_tex_unit)
 	File_Handle af_handle = platform_open_file("assets.ahh", "");
 	DEFER(platform_close_file(af_handle));
 	platform_read(af_handle, sizeof(Asset_File_Header), &af_header);
-	uint64_t af_tex_offset;
-	platform_file_seek(af_handle, af_header.mesh_texture_table_offset + sizeof(uint64_t)*mtex_table_ind);
-	platform_read(af_handle, sizeof(uint64_t), &af_tex_offset);
+	uint32_t af_tex_offset;
+	platform_file_seek(af_handle, af_header.mesh_texture_table_offset + sizeof(uint32_t)*mtex_table_ind);
+	platform_read(af_handle, sizeof(uint32_t), &af_tex_offset);
 	platform_file_seek(af_handle, af_tex_offset);
 	uint8_t bytes_per_pixel;
 	int w, h, pitch;
@@ -381,7 +378,8 @@ get_mesh_texture(uint64_t mtex_table_ind, GLuint gl_tex_unit)
 	platform_read(af_handle, sizeof(h), &h);
 	platform_read(af_handle, sizeof(pitch), &pitch);
 	size_t nbytes = h * pitch;
-	char *pixels = (char *)malloc(nbytes);
+	char *pixels = mem_alloc_array(char, nbytes, arena);
+	DEFER(mem_free(arena, pixels));
 	platform_read(af_handle, nbytes, pixels);
 	GLint format = bytes_per_pixel == 4 ? GL_RGBA : GL_RGB;
 	glBindTexture(GL_TEXTURE_2D, tex_id);
@@ -392,14 +390,11 @@ get_mesh_texture(uint64_t mtex_table_ind, GLuint gl_tex_unit)
 	glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, format, GL_UNSIGNED_BYTE, pixels);
 	glGenerateMipmap(GL_TEXTURE_2D);
 	glBindTexture(GL_TEXTURE_2D, 0);
-	free(pixels);
 
 	g_assets.mesh_textures[mtex_table_ind] = tex_id;
 	g_assets.lookup_table[asset_id] = &g_assets.mesh_textures[mtex_table_ind];
 	return tex_id;
 }
-
-//#define GET_BASE_NAME(path) path.substr(path.find_last_of('/')+1, path.find_last_of('.') - (path.find_last_of('/')+1))
 
 Model_Asset *
 get_model(Model_ID id)
@@ -414,28 +409,29 @@ get_model(Model_ID id)
 	platform_read(af_handle, sizeof(Asset_File_Header), &af_header);
 
 	Memory_Arena load_arena = mem_make_arena();
-	uint64_t af_model_ofs, num_verts, num_indices, num_meshes; 
+	DEFER(mem_destroy_arena(&load_arena));
+	uint32_t af_model_ofs, num_verts, num_indices, num_meshes; 
 	platform_file_seek(af_handle, af_header.named_asset_offsets[id]);
-	platform_read(af_handle, sizeof(uint64_t), &num_verts);
+	platform_read(af_handle, sizeof(uint32_t), &num_verts);
 	float *vert_buf = mem_alloc_array(float, num_verts, &load_arena);
-	platform_read(af_handle, sizeof(uint64_t), &num_indices);
+	platform_read(af_handle, sizeof(uint32_t), &num_indices);
 	unsigned *ind_buf = mem_alloc_array(unsigned, num_indices, &load_arena);
 	platform_read(af_handle, sizeof(Model_Vertex)*num_verts, vert_buf);
-	platform_read(af_handle, sizeof(GLuint)*num_indices, ind_buf);
-	platform_read(af_handle, sizeof(uint64_t), &num_meshes);
+	platform_read(af_handle, sizeof(uint32_t)*num_indices, ind_buf);
+	platform_read(af_handle, sizeof(uint32_t), &num_meshes);
 
 	Model_Asset *model = (Model_Asset *)mem_push(sizeof(Model_Asset) + (sizeof(Textured_Mesh)*num_meshes), &g_assets.models);
 	model->num_meshes = num_meshes;
 
 	for (int i = 0; i < num_meshes; ++i) {
 		// TODO: Should these be 32 bit or 64 bit?
-		uint64_t diff_index, spec_index;
-		platform_read(af_handle, sizeof(uint64_t), &model->meshes[i].num_indices);
-		platform_read(af_handle, sizeof(uint64_t), &model->meshes[i].base_vertex);
-		platform_read(af_handle, sizeof(uint64_t), &spec_index);
-		platform_read(af_handle, sizeof(uint64_t), &diff_index);
-		model->meshes[i].specular_id = get_mesh_texture(spec_index, GL_TEXTURE1);
-		model->meshes[i].diffuse_id = get_mesh_texture(diff_index, GL_TEXTURE0);
+		uint32_t diff_index, spec_index;
+		platform_read(af_handle, sizeof(uint32_t), &model->meshes[i].num_indices);
+		platform_read(af_handle, sizeof(uint32_t), &model->meshes[i].base_vertex);
+		platform_read(af_handle, sizeof(uint32_t), &spec_index);
+		platform_read(af_handle, sizeof(uint32_t), &diff_index);
+		model->meshes[i].specular_id = get_mesh_texture(spec_index, GL_TEXTURE1, &load_arena);
+		model->meshes[i].diffuse_id = get_mesh_texture(diff_index, GL_TEXTURE0, &load_arena);
 /*
 		if (diffuse_asset_id == (uint64_t)-1) {
 			g_models.back().notex_meshes.emplace_back(mesh_num_indices, mesh_base_vert);
@@ -472,18 +468,6 @@ get_model(Model_ID id)
 	g_assets.lookup_table[id] = model;
 	return model;
 }
-
-/*
-Model_Asset *
-get_model(Model_ID id)
-{
-	if (g_assets.lookup_table[id])
-		return (Model_Asset *)g_assets.lookup_table[id];
-	Model_Asset *m = load_model_from_disk(id);
-	g_assets.lookup_table[id] = m;
-	return m;
-}
-*/
 
 /*
 // Font texture packing.
@@ -598,12 +582,10 @@ pack_font(const FT_Library &ft, const char *font_path, const Vec2u tex_dim, cons
 void
 render_update_view(const Camera &cam)
 {
-	g_matrices.view = glm::lookAt(cam.pos, cam.pos + cam.front, cam.up);
-	Mat4 test = view_matrix({ cam.pos.x, cam.pos.y, cam.pos.z }, { cam.front.x, cam.front.y, cam.front.z });
+	g_matrices.view = view_matrix(cam.pos, cam.front);
 
 	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
-	//glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, view), sizeof(g_matrices.view), glm::value_ptr(g_matrices.view));
-	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, view), sizeof(g_matrices.view), &test);
+	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, view), sizeof(g_matrices.view), &g_matrices.view);
 	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
 	// TODO: We could split this function up and avoid updating the view pos when only our facing direction changes
@@ -615,15 +597,13 @@ render_update_view(const Camera &cam)
 void
 render_update_projection(const Camera &cam, const Vec2u &screen_dim)
 {
-	g_matrices.perspective_proj = glm::perspective(cam.fov, (float)screen_dim.x / (float)screen_dim.y, cam.near, cam.far);
-	//g_matrices.perspective_proj = perspective_matrix(cam.fov, (float)screen_dim.x / (float)screen_dim.y, cam.near, cam.far);
-	g_matrices.ortho_proj = glm::ortho(0.0f, 100.0f, 100.0f, 0.0f);
+	g_matrices.perspective_proj = perspective_matrix(cam.fov, (float)screen_dim.x / (float)screen_dim.y, cam.near, cam.far);
+	g_matrices.ortho_proj = ortho_matrix(0.0f, 100.0f, 100.0f, 0.0f);
 	//g_matrices.ortho_proj = glm::ortho(0.0f, (float)screen_dim.x, (float)screen_dim.y, 0.0f);
 	glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
 	// TODO: We could combine these calls (will break if Matrices changes)
-	//glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, perspective_proj), sizeof(g_matrices.perspective_proj), glm::value_ptr(g_matrices.perspective_proj));
 	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, perspective_proj), sizeof(g_matrices.perspective_proj), &g_matrices.perspective_proj);
-	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, ortho_proj), sizeof(g_matrices.ortho_proj), glm::value_ptr(g_matrices.ortho_proj));
+	glBufferSubData(GL_UNIFORM_BUFFER, offsetof(Matrices, ortho_proj), sizeof(g_matrices.ortho_proj), &g_matrices.ortho_proj);
 	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
 
@@ -682,15 +662,15 @@ render_init(const Camera &cam, const Vec2u &screen_dim)
 		set_bind_pt(g_shaders.untextured_mesh, "Lights", 1);
 		glGenBuffers(1, &g_ubos.lights);
 
-		g_lights.dir.direction = glm::vec4(-2.2f, 0.0f, -1.3f, 0.0f);
-		g_lights.dir.ambient = glm::vec4(0.15f, 0.15f, 0.15f, 0.0f);
-		g_lights.dir.diffuse = glm::vec4(0.4f, 0.4f, 0.4f, 0.0f);
-		g_lights.dir.specular = glm::vec4(1.5f, 1.5f, 1.5f, 0.0f);
-		g_lights.spot.ambient = glm::vec4(0.05f, 0.05f, 0.05f, 0.0f);
-		g_lights.spot.diffuse = glm::vec4(0.8f, 0.8f, 0.8f, 0.0f);
-		g_lights.spot.specular = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);
-		g_lights.spot.outer_cutoff = glm::cos(glm::radians(17.5f));
-		g_lights.spot.inner_cutoff = glm::cos(glm::radians(12.5f));
+		g_lights.dir.direction = { -2.2f, 0.0f, -1.3f, 0.0f };
+		g_lights.dir.ambient = { 0.15f, 0.15f, 0.15f, 0.0f };
+		g_lights.dir.diffuse = { 0.4f, 0.4f, 0.4f, 0.0f };
+		g_lights.dir.specular = { 1.5f, 1.5f, 1.5f, 0.0f };
+		g_lights.spot.ambient = { 0.05f, 0.05f, 0.05f, 0.0f };
+		g_lights.spot.diffuse = { 0.8f, 0.8f, 0.8f, 0.0f };
+		g_lights.spot.specular = { 1.0f, 1.0f, 1.0f, 0.0f };
+		g_lights.spot.outer_cutoff = _cos(17.5f * M_DEG_TO_RAD);
+		g_lights.spot.inner_cutoff = _cos(12.5f * M_DEG_TO_RAD);
 		g_lights.spot.constant = 1.0f;
 		g_lights.spot.linear = 0.09f;
 		g_lights.spot.quadratic = 0.032f;
@@ -790,10 +770,10 @@ render_init(const Camera &cam, const Vec2u &screen_dim)
 }
 
 void
-render_add_instance(Model_ID id, const glm::vec3 &pos)
+render_add_instance(Model_ID id, Vec3f pos)
 {
 	Model_Instance *i = mem_alloc(Model_Instance, &g_model_instances[id]);
-	i->pos = glm::translate(glm::mat4(), pos);
+	i->pos = translate(make_mat4(), pos);
 /*
 	auto it = g_model_map.find(name);
 	if (it == g_model_map.end()) {
@@ -844,7 +824,7 @@ render_sim()
 		}
 		for (Model_Instance *inst = (Model_Instance *)mem_start(&g_model_instances[i]); inst; inst = (Model_Instance *)mem_next(inst)) {
 			glUseProgram(g_shaders.textured_mesh);
-			glUniformMatrix4fv(tex_model_loc, 1, GL_FALSE, glm::value_ptr(inst->pos));
+			glUniformMatrix4fv(tex_model_loc, 1, GL_FALSE, &inst->pos[0]);
 			for (int j = 0; j < num_meshes; ++j) {
 				glActiveTexture(GL_TEXTURE0);
 				glBindTexture(GL_TEXTURE_2D, model->meshes[j].diffuse_id);

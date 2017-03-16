@@ -1,7 +1,5 @@
-//#include <stdlib.h>
 #include <stdint.h>
 #include <assert.h>
-//#include <string.h>
 #include <stdarg.h>
 
 #include "asset_ids.h"
@@ -15,27 +13,20 @@
 #include "render.cpp"
 #include "input.cpp"
 
-//#include <GL/glew.h>
-
-//#include "render.h"
-//#include "update.h"
-//#include "zlib.h"
-//#include "ui.h"
-
 enum struct Program_State {
 	run = 0,
 	pause,
 	exit
 };
 
-glm::vec3
-calc_front(GLfloat pitch, GLfloat yaw)
+Vec3f
+calc_front(float pitch, float yaw)
 {
-	glm::vec3 new_front;
-	new_front.x = cos(glm::radians(pitch)) * cos(glm::radians(yaw));
-	new_front.y = sin(glm::radians(pitch));
-	new_front.z = cos(glm::radians(pitch)) * sin(glm::radians(yaw));
-	return glm::normalize(new_front);
+	Vec3f new_front;
+	new_front.x = _cos(pitch * M_DEG_TO_RAD) * _cos(yaw * M_DEG_TO_RAD);
+	new_front.y = _sin(pitch * M_DEG_TO_RAD);
+	new_front.z = _cos(pitch * M_DEG_TO_RAD) * _sin(yaw * M_DEG_TO_RAD);
+	return normalize(new_front);
 }
 
 void
@@ -70,14 +61,14 @@ update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 		if(input_is_key_down(kb, S_KEY))
 			cam->pos -= cam->speed * cam->front;
 		if(input_is_key_down(kb, A_KEY))
-			cam->pos -= glm::normalize(glm::cross(cam->front, cam->up)) * cam->speed;
+			cam->pos -= cam->speed * normalize(cross_product(cam->front, cam->up));
 		if(input_is_key_down(kb, D_KEY))
-			cam->pos += glm::normalize(glm::cross(cam->front, cam->up)) * cam->speed;
+			cam->pos += cam->speed * normalize(cross_product(cam->front, cam->up));
 		if(input_is_key_down(kb, Q_KEY))
 			cam->pos += cam->speed * cam->up;
 		if(input_is_key_down(kb, E_KEY))
 			cam->pos -= cam->speed * cam->up;
-	} else {
+	} else {/*
 		if(input_is_key_down(kb, W_KEY))
 			cam->pos += cam->speed * glm::vec3(cam->front.x, 0.0f, cam->front.z);
 		if(input_is_key_down(kb, S_KEY))
@@ -98,6 +89,7 @@ update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 			cam->yaw += 5.0f;
 			cam->front = calc_front(cam->pitch, cam->yaw);
 		}
+		*/
 	}
 }
 
@@ -136,8 +128,8 @@ handle_events(Keyboard *kb, Mouse *m, const Vec2i &screen_dim, const Camera &cam
 void
 main_loop(Vec2u screen_dim)
 {
-	Camera cam = { 0.0f, 0.0f, 1.1f, glm::vec3(0.0f, 0.0f,  0.0f), calc_front(0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 45.0f, 0.1f, 100.0f };
-	cam.pos -= 50.0f*cam.front;
+	Camera cam = { 0.0f, 0.0f, 0.5f, { 0.0f, 0.0f,  0.0f }, calc_front(0.0f, 0.0f), { 0.0f, 1.0f, 0.0f }, 45.0f, 0.1f, 100.0f };
+	//cam.pos -= 50.0f*cam.front;
 	//Camera cam = { -45.0f, 45.0f, 0.2f, glm::vec3(0.0f, 10.0f,  -5.0f), calc_front(-45.0f, 45.0f), glm::vec3(0.0f, 1.0f,  0.0f), 45.0f, 0.1f, 100.0f };
 	Input input;
 	input.mouse = { {screen_dim.x/2, screen_dim.y/2}, {0, 0}, 0.1f, 0 };
@@ -153,8 +145,8 @@ main_loop(Vec2u screen_dim)
 	unsigned num_updates = 0;
 	//unsigned next_tick = SDL_GetTicks();
 	render_init(cam, screen_dim);
-	render_add_instance(NANOSUIT_MODEL, glm::vec3(0.0f, 0.0f, 0.0f));
-	render_add_instance(NANOSUIT_MODEL, glm::vec3(5.0f, 0.0f, 0.0f));
+	render_add_instance(NANOSUIT_MODEL, { 0.0f, 0.0f, 0.0f });
+	render_add_instance(NANOSUIT_MODEL, { 5.0f, 0.0f, 0.0f });
 
 	/*
 	auto set_bind_pt = [](const GLuint program, const char *name, const GLuint bind_pt) {

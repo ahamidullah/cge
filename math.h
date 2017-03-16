@@ -9,6 +9,15 @@ constexpr float M_4_PI = (4 / M_PI);
 constexpr float M_3_PI_2 = (3 * M_PI_2);
 constexpr float M_DEG_TO_RAD (M_PI / 180.0f);
 
+constexpr unsigned round_nearest(float f);
+
+// Not sure if this is great...
+float
+_fmod(float x, float y)
+{
+	return x - (round_nearest(x/y)*y);
+}
+
 // Accurate to ~5 decimal places. Could change for more speed or precision.
 float
 __cos(float x)
@@ -27,10 +36,9 @@ _cos(float x)
 {
 	// _cos() is only accurate from 0 to pi/2.
 
-	assert(x < M_PI_TIMES_2); // We don't handle this yet...
-	//x = fmod(x, M_PI_TIMES_2);
-	//if (x < 0.0)
-	//	x = -x;
+	x = _fmod(x, M_PI_TIMES_2);
+	if (x < 0.0f)
+		x = -x;
 
 	int quad = (int)(x / M_PI_2); // Which quadrant are we in?
 	if (quad == 0)
@@ -41,7 +49,8 @@ _cos(float x)
 		return -__cos(x - M_PI);
 	else if (quad == 3)
 		return __cos(M_PI_TIMES_2 - x);
-	return 0.0;
+	assert(0);
+	return 0.0f;
 }
 
 float
@@ -87,6 +96,8 @@ _tan(float x)
 		return -1.0 / __tan((x - M_3_PI_2) * M_4_PI);
 	else if (octant == 7)
 		return -__tan((M_PI_TIMES_2 - x) * M_4_PI);
+	assert(0);
+	return 0.0f;
 }
 
 struct Vec2i {
@@ -227,14 +238,14 @@ operator+(Vec3f a, Vec3f b)
 inline Vec3f &Vec3f::
 operator-=(Vec3f v)
 {
-	*this = v - *this;
+	*this = *this - v;
 	return *this;
 }
 
 inline Vec3f &Vec3f::
 operator+=(Vec3f v)
 {
-	*this = v + *this;
+	*this = *this + v;
 	return *this;
 }
 
@@ -302,14 +313,12 @@ struct Mat4 {
 inline Mat4
 perspective_matrix(float fovy, float aspect_ratio, float near, float far)
 {
-	float top = _tan((fovy / 2) * M_DEG_TO_RAD) * near;
+	float top = _tan((fovy / 2) * M_DEG_TO_RAD);
 	float right = top * aspect_ratio;
-	return {
-	           (near / right), 0, 0, 0,
-	           0, (near / top), 0, 0,
-	           0, 0, (-(far + near) / (far - near)), ((-2*far*near) / (far - near)),
-	           0, 0, -1, 0
-	       };
+	return { (1.0f / right), 0, 0, 0,
+	         0, (1.0f / top), 0, 0,
+	         0, 0, (-(far + near) / (far - near)), -1.0f,
+	         0, 0, ((-2*far*near) / (far - near)), 0     };
 }
 
 inline Mat4
@@ -321,6 +330,21 @@ ortho_matrix(float left, float right, float bottom, float top)
 	         -(right + left) / (right - left), -(top + bottom) / (top - bottom), 0, 0 };
 }
 
+// Assumes z is a unit vector.
+inline Mat4
+view_matrix(Vec3f eye, Vec3f zaxis)
+{
+	//assert(length(front) <= 1.0f);
+	//zaxis = normalize(zaxis);
+	Vec3f xaxis = normalize(cross_product(zaxis, { 0.0f, 1.0f, 0.0f }));
+	Vec3f yaxis = cross_product(xaxis, zaxis);
+
+	return { xaxis.x, yaxis.x, -zaxis.x, 0,
+	         xaxis.y, yaxis.y, -zaxis.y, 0,
+	         xaxis.z, yaxis.z, -zaxis.z, 0,
+	         -dot_product(xaxis, eye), -dot_product(yaxis, eye), dot_product(zaxis, eye), 1 };
+}
+
 inline Mat4
 transpose(Mat4 m)
 {
@@ -330,19 +354,22 @@ transpose(Mat4 m)
 	         m.m14, m.m24, m.m34, m.m44 };
 }
 
-// Assumes z is a unit vector.
 inline Mat4
-view_matrix(Vec3f eye, Vec3f zaxis)
+translate(Mat4 m, Vec3f pos)
 {
-	//assert(length(front) <= 1.0f);
-	zaxis = normalize(zaxis);
-	Vec3f xaxis = normalize(cross_product(zaxis, { 0.0f, 1.0f, 0.0f }));
-	Vec3f yaxis = cross_product(xaxis, zaxis);
+	m.m41 = pos.x;
+	m.m42 = pos.y;
+	m.m43 = pos.z;
+	return m;
+}
 
-	return { xaxis.x, yaxis.x, -zaxis.x, 0,
-	         xaxis.y, yaxis.y, -zaxis.y, 0,
-	         xaxis.z, yaxis.z, -zaxis.z, 0,
-	         -dot_product(xaxis, eye), -dot_product(yaxis, eye), dot_product(zaxis, eye), 1 };
+inline Mat4
+make_mat4()
+{
+	return { 1, 0, 0, 0,
+	         0, 1, 0, 0,
+	         0, 0, 1, 0,
+	         0, 0, 0, 1 };
 }
 
 inline Mat4
