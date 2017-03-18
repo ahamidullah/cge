@@ -274,6 +274,9 @@ platform_handle_events(Input *in)
 		case KeyRelease: {
 			input_key_up(&in->keyboard, xev.xkey.keycode);
 		} break;
+		case FocusOut: {
+			in->mouse.motion = {0,0}; // Clear residual mouse motion so we don't keep using it in cam calculations.
+		} break;
 		case FocusIn: {
 			platform_update_mouse(&in->mouse); // Reset mouse position so the view doesn't "jump" when we regain focus.
 		} break;

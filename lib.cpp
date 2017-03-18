@@ -1,13 +1,13 @@
-constexpr unsigned
+constexpr int
 round_nearest(float f)
 {
-	return (unsigned)(f + 0.5f);
+	return (f > 0.0f) ? (int)(f + 0.5f) : (int)(f - 0.5f);
 }
 
-constexpr unsigned
+constexpr int
 round_up(float f)
 {
-	return (unsigned)(f + 1.0f);
+	return (f > 0.0f) ? (int)(f + 1.0f) : (int)(f - 1.0f);
 }
 
 template <typename F>

@@ -9,12 +9,15 @@ constexpr float M_4_PI = (4 / M_PI);
 constexpr float M_3_PI_2 = (3 * M_PI_2);
 constexpr float M_DEG_TO_RAD (M_PI / 180.0f);
 
-constexpr unsigned round_nearest(float f);
+constexpr int round_nearest(float f);
 
+#include <stdio.h>
 // Not sure if this is great...
 float
 _fmod(float x, float y)
 {
+	int r = round_nearest(x/y);
+	printf("%d\n", r);
 	return x - (round_nearest(x/y)*y);
 }
 
@@ -32,15 +35,16 @@ __cos(float x)
 }
 
 float
-_cos(float x)
+_cos(float x2)
 {
 	// _cos() is only accurate from 0 to pi/2.
 
-	x = _fmod(x, M_PI_TIMES_2);
+	float x = _fmod(x2, M_PI_TIMES_2);
 	if (x < 0.0f)
 		x = -x;
 
 	int quad = (int)(x / M_PI_2); // Which quadrant are we in?
+	printf("%f %f %d\n", x2, x, quad);
 	if (quad == 0)
 		return __cos(x);
 	else if (quad == 1)

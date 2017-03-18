@@ -1,6 +1,7 @@
 constexpr int MAX_PT_LIGHTS = 4;
 constexpr int MAX_UI_VERTICES = 100;
 constexpr int MAX_GLYPH_VERTICES = 1000;
+constexpr int MESH_TEX_NONEXIST = (uint32_t)-1;
 
 struct Render_Id {
 	size_t model_ind;
@@ -39,12 +40,6 @@ struct Model_Vertex {
 };
 
 struct Dir_Light {
-/*
-	glm::vec4 direction;
-	glm::vec4 ambient;
-	glm::vec4 diffuse;
-	glm::vec4 specular;
-*/
 	Vec4f direction;
 	Vec4f ambient;
 	Vec4f diffuse;
@@ -52,13 +47,7 @@ struct Dir_Light {
 };
 
 struct Spot_Light {
-	// TODO: pack the floats into the last component of the glm::vec4
-	//glm::vec4 position;
-	//glm::vec4 direction;
-	//glm::vec4 ambient;
-	//glm::vec4 diffuse;
-	//glm::vec4 specular;
-
+	// TODO: pack the floats into the last component of the Vec4f
 	Vec4f position;
 	Vec4f direction;
 	Vec4f ambient;
@@ -73,12 +62,6 @@ struct Spot_Light {
 };
 
 struct Point_Light {    
-/*
-	glm::vec4 position;
-	glm::vec4 ambient;
-	glm::vec4 diffuse;
-	glm::vec4 specular;
-	*/
 	Vec4f position;
 	Vec4f ambient;
 	Vec4f diffuse;
@@ -312,48 +295,10 @@ make_gpu_program(const char *vert_src, const char *frag_src, const char *defines
 	return program;
 }
 
-/*
-static std::optional<GLuint>
-get_texture(std::string path, GLuint gl_tex_unit)
-{
-	auto it = g_tex_map.find(path);
-	if (it != g_tex_map.end())
-		return it->second;
-
-	// Load the texture from disk.
-	// For now, let's just gen a texture id whenever we need it. Should probably do this in batches.
-	GLuint tex_id;
-	glGenTextures(1, &tex_id);
-	glActiveTexture(gl_tex_unit);
-	SDL_Surface *tex;
-	if (!(tex = IMG_Load(path.c_str()))) {
-		zerror("IMG_Load failed! IMG_GetError: %s\n", IMG_GetError());
-		return {};
-	}
-	printf("Loaded texture file %s\n", path.c_str());
-	GLint format = tex->format->BytesPerPixel == 4 ? GL_RGBA : GL_RGB;
-	glBindTexture(GL_TEXTURE_2D, tex_id);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexImage2D(GL_TEXTURE_2D, 0, format, tex->w, tex->h, 0, format, GL_UNSIGNED_BYTE, tex->pixels);
-	glGenerateMipmap(GL_TEXTURE_2D);
-	SDL_FreeSurface(tex);
-	glBindTexture(GL_TEXTURE_2D, 0);
-
-	g_tex_map[path] = tex_id;
-	return tex_id;
-}
-*/
-
-// @TEMP
-#include <stdlib.h>
-
 static GLuint
 get_mesh_texture(uint32_t mtex_table_ind, GLuint gl_tex_unit, Memory_Arena *arena)
 {
-	if (mtex_table_ind == (uint32_t) -1)
+	if (mtex_table_ind == MESH_TEX_NONEXIST)
 		return 0;
 
 	size_t asset_id = get_mesh_tex_asset_id(mtex_table_ind);
@@ -774,31 +719,7 @@ render_add_instance(Model_ID id, Vec3f pos)
 {
 	Model_Instance *i = mem_alloc(Model_Instance, &g_model_instances[id]);
 	i->pos = translate(make_mat4(), pos);
-/*
-	auto it = g_model_map.find(name);
-	if (it == g_model_map.end()) {
-		zerror("tried to add instance of invalid model '%s'", name.c_str());
-		return {};
-	}
-	Model *m = &g_models[it->second];
-	m->instances.emplace_back(glm::translate(glm::mat4(), pos));
-	printf("added instance of %s\n", name.c_str());
-	Render_Id rid = { it->second, m->instances.size()-1 };
-	return rid;
-*/
 }
-
-/*
-void
-render_update_instance(const Render_Id rid, const glm::vec3 &offset)
-{
-	assert(rid.model_ind < g_models.size());
-	assert(rid.instance_ind < g_models[rid.model_ind].instances.size());
-	Model *m = &g_models[rid.model_ind];
-	glm::mat4 *in = &m->instances[rid.instance_ind];
-	*in = glm::translate(*in, offset);
-}
-*/
 
 // TODO:
 // - We handle untextured meshes which slows us down (extra gl calls, extra loops).

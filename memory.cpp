@@ -3,7 +3,7 @@ size_t BLOCK_DATA_PLUS_FOOTER_SIZE = BLOCK_DATA_SIZE + sizeof(Block_Footer);
 size_t CHUNK_DATA_SIZE = BLOCK_DATA_PLUS_FOOTER_SIZE * 1024;
 size_t CHUNK_DATA_PLUS_FOOTER_SIZE = CHUNK_DATA_SIZE + sizeof(Chunk_Footer);
 
-constexpr unsigned round_up(float f);
+constexpr int round_up(float f);
 
 Chunk_Footer *
 mem_make_chunk()
@@ -87,7 +87,7 @@ mem_destroy_arena(const Memory_Arena *ma)
 //                  start pointer and end pointer both change blocks as the reverse ends
 //                  end pointer is the first byte of a new block
 //                  start and end in different chunks
-// Do we even use this?
+// Do we even use this anymore?
 void
 mem_reverse(Arena_Address *start, Arena_Address *end, Memory_Arena *ma)
 {

@@ -93,38 +93,6 @@ update_camera(const Mouse& m, Keyboard *kb, Camera *cam)
 	}
 }
 
-/*
-Program_State
-handle_events(Keyboard *kb, Mouse *m, const Vec2i &screen_dim, const Camera &cam)
-{
-	SDL_Event e;
-	while(SDL_PollEvent(&e) != 0) {
-		switch (e.type) {
-		case SDL_QUIT:
-			return Program_State::exit;
-		case SDL_KEYDOWN:
-			input_key_down(kb, e.key);
-			break;
-		case SDL_KEYUP:
-			input_key_up(kb, e.key);
-			break;
-		case SDL_MOUSEBUTTONDOWN: 
-		{
-			auto pos = raycast_plane(glm::vec2(e.button.x, e.button.y), glm::vec3(0.0f, 1.0f, 0.0f), cam.pos, 0.0f, screen_dim);
-			if (pos)
-				mk_point_light(*pos);
-			input_mbutton_down(e.button, m);
-			break;
-		}
-		case SDL_MOUSEBUTTONUP:
-			input_mbutton_up(e.button, m);
-			break;
-		}
-	}
-	return Program_State::run;
-}
-*/
-
 void
 main_loop(Vec2u screen_dim)
 {
@@ -134,9 +102,6 @@ main_loop(Vec2u screen_dim)
 	Input input;
 	input.mouse = { {screen_dim.x/2, screen_dim.y/2}, {0, 0}, 0.1f, 0 };
 	input.keyboard = { {0}, {0} };
-	Vec2f a = {1.0f, 2.0f};
-	a *= 4.0f;
-	//printf("%d %d\n", (int)a.x, (int)a.y);
 
 	Program_State state = Program_State::run;
 	constexpr unsigned TICKS_PER_SECOND =  25;
@@ -148,29 +113,6 @@ main_loop(Vec2u screen_dim)
 	render_add_instance(NANOSUIT_MODEL, { 0.0f, 0.0f, 0.0f });
 	render_add_instance(NANOSUIT_MODEL, { 5.0f, 0.0f, 0.0f });
 
-	/*
-	auto set_bind_pt = [](const GLuint program, const char *name, const GLuint bind_pt) {
-		const GLuint ind = glGetUniformBlockIndex(program, name);
-		glUniformBlockBinding(program, ind, bind_pt);
-	};
-	// init matrix ubo
-	{
-		set_bind_pt(g_shaders.textured_mesh, "Matrices", 0);
-		set_bind_pt(g_shaders.untextured_mesh, "Matrices", 0);
-		set_bind_pt(g_shaders.ui, "Matrices", 0);
-		glGenBuffers(1, &g_ubos.matrices);
-
-		//render_update_view(cam);
-		//render_update_projection(cam, screen_dim);
-		glBindBuffer(GL_UNIFORM_BUFFER, g_ubos.matrices);
-		glBufferData(GL_UNIFORM_BUFFER, 0, NULL, GL_STATIC_DRAW);
-		glBindBuffer(GL_UNIFORM_BUFFER, 0);
-		glBindBufferBase(GL_UNIFORM_BUFFER, 0, g_ubos.matrices);
-	}
-	*/
-	//char str[] = "of the system";
-	//printf("          just %d and then %s before very long so that the buffer might overflow nad then we can see what the hech is going to happen ii don't know but I'll prob have to make the buffer a bit smaller so that this works the %c\n", 123456, str, '(');
-	//printf("test %d\n", 45);
 	while (state != Program_State::exit) {
 		switch (state) {
 		case Program_State::run: {
@@ -187,7 +129,6 @@ main_loop(Vec2u screen_dim)
 				update_camera(input.mouse, &input.keyboard, &cam);
 				render_update_view(cam);
 				render_sim();
-				input.mouse.motion = {0,0};
 				platform_swap_buffers();
 			}
 			//render_sim();
@@ -202,40 +143,3 @@ main_loop(Vec2u screen_dim)
 		}
 	}
 }
-	/*UI_State ui;
-	SDL_Window *window;
-	SDL_GLContext context;
-
-	// sdl init
-	{
-		int winflags = (SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
-		int imgflags = (IMG_INIT_PNG | IMG_INIT_JPG);
-	
-		if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) < 0) {
-			zabort("SDL could not initialize video! SDL Error: %s\n", SDL_GetError());
-		}
-
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-
-		if (!(window = SDL_CreateWindow("cge", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, screen_dim.x, screen_dim.y, winflags))) {
-			zabort("SDL could not create a window! SDL Error: %s\n", SDL_GetError());
-		}
-		if (!(IMG_Init(imgflags) & imgflags)) {
-			zabort("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
-		}
-		if (!(context = SDL_GL_CreateContext(window))) {
-			zabort("SDL could not create an OpenGL context! SDL Error: %s\n", SDL_GetError());
-		}
-	}
-
-	render_init(cam, screen_dim);
-	update_init();
-	ui_init(&ui);
-
-	render_quit();
-	SDL_DestroyWindow(window);
-	SDL_GL_DeleteContext(context);
-	IMG_Quit();
-	SDL_Quit();*/
