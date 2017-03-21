@@ -111,7 +111,7 @@ main_loop(Vec2u screen_dim)
 	//unsigned next_tick = SDL_GetTicks();
 	render_init(cam, screen_dim);
 	render_add_instance(NANOSUIT_MODEL, { 0.0f, 0.0f, 0.0f });
-	render_add_instance(NANOSUIT_MODEL, { 5.0f, 0.0f, 0.0f });
+	render_add_instance(NANOSUIT_MODEL, { 0.0f, 0.0f, 50.0f });
 
 	while (state != Program_State::exit) {
 		switch (state) {
@@ -119,6 +119,10 @@ main_loop(Vec2u screen_dim)
 			num_updates = 0;
 			//while (next_tick < SDL_GetTicks() && num_updates < MAX_FRAMESKIP) {
 			while (1) {
+				if (MBUTTON_IS_DOWN(input.mouse.buttons, MBUTTON_1)) {
+					Vec3f pt;
+					raycast_plane(input.mouse.pos, {0.0f, 1.0f, 0.0f}, cam.pos, 0.0f, screen_dim, &pt);
+				}
 				platform_handle_events(&input);
 				//state = handle_events(&kb, &mouse, screen_dim, cam);
 				//input_update_mouse(&mouse);

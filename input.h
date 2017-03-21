@@ -3,8 +3,8 @@
 
 //#include <SDL2/SDL.h>
 
-#define MBUTTON_IS_DOWN(buttons, which) (buttons & which)
-#define MBUTTON_IS_UP(buttons, which) (!MBUTTON_IS_DOWN(buttons, which))
+#define MBUTTON_IS_DOWN(buttons, which) (buttons & (unsigned)which)
+#define MBUTTON_IS_UP(buttons, which) (!MBUTTON_IS_DOWN(buttons, (unsigned)which))
 
 // TODO: move some of this stuff to a generic shared header
 enum Mouse_Buttons {
@@ -17,7 +17,7 @@ struct Mouse {
 	Vec2i pos;
 	Vec2i motion;
 	float sensitivity;
-	unsigned char buttons;
+	unsigned buttons;
 };
 
 struct Keyboard {
@@ -29,13 +29,5 @@ struct Input {
 	Mouse mouse;
 	Keyboard keyboard;
 };
-
-//void input_key_up(Keyboard *, const SDL_KeyboardEvent &);
-//void input_key_down(Keyboard *, const SDL_KeyboardEvent &);
-//bool input_is_key_down(const Keyboard *, const SDL_Keycode);
-//bool input_was_key_pressed(Keyboard *, const SDL_Keycode);
-//void input_mbutton_up(const SDL_MouseButtonEvent &, Mouse *);
-//void input_mbutton_down(const SDL_MouseButtonEvent &, Mouse *);
-//void input_update_mouse(Mouse *);
 
 #endif

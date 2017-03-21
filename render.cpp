@@ -182,34 +182,30 @@ get_mesh_tex_asset_id(size_t mtex_table_ind)
 	return NUM_NAMED_ASSET_IDS + mtex_table_ind;
 }
 
-/*
-V3f
-screen_to_world_ray(V2u screen_pos, V2i screen_dim)
+#include <stdio.h>
+bool
+raycast_plane(Vec2i screen_ray, Vec3f plane_normal, Vec3f origin, const float origin_ofs, const Vec2u &screen_dim, Vec3f *out_pt)
 {
-	float x = (2.0f * screen_pos.x) / screen_dim.x - 1.0f;
-	float y = 1.0f - (2.0f * screen_pos.y) / screen_dim.y;
-	Vec4f clip_ray = { x, y, -1.0f, 1.0f }; // OpenGL specific, -1 is away from the screen.
-	inverse(g_matrices.view * g_matrices.perspective_proj);
-}
-*/
+	// XCoordinates from -1 to 1
+	float x = (2.0f * screen_ray.x) / screen_dim.x - 1.0f;
+	// YCoordinates from -1 to 1, flipped because y increases upwards in GL but decreases upwards in window coordinates.
+	float y = 1.0f - (2.0f * screen_ray.y) / screen_dim.y;
 
-/*
-V3f
-raycast_plane_intersect(const V2u &screen_ray, const V3f &plane_normal, const V3f &origin, const float origin_ofs, const V2i &screen_dim)
-{
-	glm::vec4 eye_ray = glm::inverse(g_matrices.perspective_proj) * clip_ray;
-	eye_ray = glm::vec4(eye_ray.x, eye_ray.y, -1.0f, 0.0f);
-	glm::vec3 world_ray = glm::normalize((glm::inverse(g_matrices.view) * eye_ray).xyz());
-	float l = glm::dot(world_ray, plane_normal);
+	// Reverse pipeline.
+	Mat4 inv_pv = inverse(g_matrices.perspective_proj * g_matrices.view);
+	Vec3f near = unproject({x,y,-1.0f}, inv_pv);
+	Vec3f far = unproject({x,y,1.0f}, inv_pv);
+	Vec3f world_ray = normalize(far - near);
+
+	float l = dot_product(world_ray, plane_normal);
 	if (l >= 0.0f && l <= 0.001f) // perpendicular
-		return {};
-	float t = -((glm::dot(origin, glm::vec3(0.0f, 1.0f, 0.0f)) + origin_ofs) / l);
+		return false;
+	float t = -((dot_product(origin, plane_normal) + origin_ofs) / l);
 	if (t < 0.0f) // intersected behind
-		return {};
-	glm::vec3 pos = origin + world_ray * t;
-	return pos;
+		return false;
+	*out_pt = origin + (t * world_ray);
+	return true;
 }
-*/
 
 /*
 void

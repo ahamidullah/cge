@@ -32,6 +32,12 @@ enum Linux_Key_Symbols {
 	PLATFORM_F_KEY = XK_f,
 };
 
+enum Linux_Mouse_Buttons {
+	PLATFORM_MBUTTON_1 = Button1,
+	PLATFORM_MBUTTON_2 = Button2,
+	PLATFORM_MBUTTON_3 = Button3,
+};
+
 struct Platform_Time {
 	timespec time;
 };
@@ -98,7 +104,7 @@ int
 main()
 {
 	GLXFBConfig fbconfig;
-	Vec2u screen_dim { 1600, 1200 };
+	Vec2u screen_dim { 1200, 900 };
 
 	// create window
 	{
@@ -250,7 +256,7 @@ platform_keysym_to_scancode(Key_Symbol ks)
 }
 
 void
-platform_update_mouse(Mouse *m)
+platform_update_mouse_pos(Mouse *m)
 {
 	Window root, child;
 	Vec2i root_pos, mpos;
@@ -263,6 +269,13 @@ platform_update_mouse(Mouse *m)
 void
 platform_handle_events(Input *in)
 {
+	Window active;
+	int revert_to;
+	XGetInputFocus(g_pctx.display, &active, &revert_to);
+	// TODO: Stop updating the camera if the mouse pointer isn't inside our window?
+	if (active == g_pctx.window)
+		platform_update_mouse_pos(&in->mouse);
+
 	// TODO: Set up an auto-pause when we lose focus?
 	XEvent xev;
 	while (XPending(g_pctx.display)) {
@@ -274,24 +287,23 @@ platform_handle_events(Input *in)
 		case KeyRelease: {
 			input_key_up(&in->keyboard, xev.xkey.keycode);
 		} break;
+		case ButtonPress: {
+			input_mbutton_down((Mouse_Button)xev.xbutton.button, &in->mouse);
+		} break;
+		case ButtonRelease: {
+			input_mbutton_up((Mouse_Button)xev.xbutton.button, &in->mouse);
+		} break;
 		case FocusOut: {
 			in->mouse.motion = {0,0}; // Clear residual mouse motion so we don't keep using it in cam calculations.
 		} break;
 		case FocusIn: {
-			platform_update_mouse(&in->mouse); // Reset mouse position so the view doesn't "jump" when we regain focus.
+			platform_update_mouse_pos(&in->mouse); // Reset mouse position so the view doesn't "jump" when we regain focus.
 		} break;
 		case ClientMessage:
 			if ((Atom)xev.xclient.data.l[0] == g_pctx.wm_delete_window)
 				platform_exit();
 		}
 	}
-
-	Window active;
-	int revert_to;
-	XGetInputFocus(g_pctx.display, &active, &revert_to);
-	// TODO: Stop updating the camera if the mouse pointer isn't inside our window?
-	if (active == g_pctx.window)
-		platform_update_mouse(&in->mouse);
 }
 
 void

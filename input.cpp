@@ -36,29 +36,19 @@ input_was_key_pressed(Keyboard *kb, Key_Symbol ks)
 	return false;
 }
 
+void
+input_mbutton_down(Mouse_Button button, Mouse *m)
+{
+	m->buttons |= (unsigned)button;
+}
+
+void
+input_mbutton_up(Mouse_Button button, Mouse *m)
+{
+	m->buttons &= ~(unsigned)button;
+}
+
 /*
-void
-input_mbutton_down(const SDL_MouseButtonEvent &e, Mouse *m)
-{
-	if (e.button == SDL_BUTTON_LEFT)
-		m->buttons |= mbutton_left;
-	else if (e.button == SDL_BUTTON_MIDDLE)
-		m->buttons |= mbutton_middle;
-	else if (e.button == SDL_BUTTON_RIGHT)
-		m->buttons |= mbutton_right;
-}
-
-void
-input_mbutton_up(const SDL_MouseButtonEvent &e, Mouse *m)
-{
-	if (e.button == SDL_BUTTON_LEFT)
-		m->buttons &= ~mbutton_left;
-	else if (e.button == SDL_BUTTON_MIDDLE)
-		m->buttons &= ~mbutton_middle;
-	else if (e.button == SDL_BUTTON_RIGHT)
-		m->buttons &= ~mbutton_right;
-}
-
 void
 input_update_mouse(Mouse *m)
 {

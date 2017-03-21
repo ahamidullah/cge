@@ -13,9 +13,14 @@ enum Key_Symbol {
 	W_KEY = PLATFORM_W_KEY,
 };
 
+enum Mouse_Button {
+	MBUTTON_1 = PLATFORM_MBUTTON_1,
+};
+
 struct File_Handle;
 struct Platform_Time;
 
+void platform_update_mouse_pos(Mouse *);
 unsigned platform_keysym_to_scancode(Key_Symbol);
 void platform_exit();
 void platform_handle_events(Input *);

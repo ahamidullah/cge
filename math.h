@@ -11,13 +11,10 @@ constexpr float M_DEG_TO_RAD (M_PI / 180.0f);
 
 constexpr int round_nearest(float f);
 
-#include <stdio.h>
 // Not sure if this is great...
 float
 _fmod(float x, float y)
 {
-	int r = round_nearest(x/y);
-	printf("%d\n", r);
 	return x - (round_nearest(x/y)*y);
 }
 
@@ -44,7 +41,6 @@ _cos(float x2)
 		x = -x;
 
 	int quad = (int)(x / M_PI_2); // Which quadrant are we in?
-	printf("%f %f %d\n", x2, x, quad);
 	if (quad == 0)
 		return __cos(x);
 	else if (quad == 1)
@@ -255,7 +251,26 @@ operator+=(Vec3f v)
 
 struct Vec4f {
 	float x, y, z, w;
+	inline Vec4f &operator/=(float v);
 };
+
+inline Vec4f
+operator/(Vec4f v, float s)
+{
+	Vec4f result;
+	result.x = v.x / s;
+	result.y = v.y / s;
+	result.z = v.z / s;
+	result.w = v.w / s;
+	return result;
+}
+
+inline Vec4f &Vec4f::
+operator/=(float v)
+{
+	*this = *this / v;
+	return *this;
+}
 
 // Quake approximation...
 float
@@ -288,6 +303,12 @@ normalize(Vec3f v)
 }
 
 inline float
+dot_product(Vec4f a, float *b)
+{
+	return a.x*b[0] + a.y*b[1] + a.z*b[2] + a.w*b[3];
+}
+
+inline float
 dot_product(Vec3f a, Vec3f b)
 {
 	return a.x*b.x + a.y*b.y + a.z*b.z;
@@ -310,7 +331,8 @@ length(Vec3f v)
 */
 
 struct Mat4 {
-	float m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44;
+	//float m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44;
+	float m11, m21, m31, m41, m12, m22, m32, m42, m13, m23, m33, m43, m14, m24, m34, m44;
 	float &operator[](int i) { return (&m11)[i]; }
 };
 
@@ -361,9 +383,9 @@ transpose(Mat4 m)
 inline Mat4
 translate(Mat4 m, Vec3f pos)
 {
-	m.m41 = pos.x;
-	m.m42 = pos.y;
-	m.m43 = pos.z;
+	m.m14 = pos.x;
+	m.m24 = pos.y;
+	m.m34 = pos.z;
 	return m;
 }
 
@@ -374,6 +396,52 @@ make_mat4()
 	         0, 1, 0, 0,
 	         0, 0, 1, 0,
 	         0, 0, 0, 1 };
+}
+
+inline Vec4f
+operator*(Mat4 m, Vec4f v)
+{
+	Vec4f result;
+	result.x = v.x*m.m11 + v.y*m.m12 + v.z*m.m13 + v.w*m.m14;
+	result.y = v.x*m.m21 + v.y*m.m22 + v.z*m.m23 + v.w*m.m24;
+	result.z = v.x*m.m31 + v.y*m.m32 + v.z*m.m33 + v.w*m.m34;
+	result.w = v.x*m.m41 + v.y*m.m42 + v.z*m.m43 + v.w*m.m44;
+	return result;
+}
+
+inline Vec3f
+unproject(Vec3f win, const Mat4 &inverse_proj_view)
+{
+	Vec4f world_ray = inverse_proj_view * (Vec4f){ win.x, win.y, win.z, 1.0f };
+	world_ray /= world_ray.w;
+	return { world_ray.x, world_ray.y, world_ray.z };
+}
+
+inline Mat4
+operator*(Mat4 a, Mat4 b)
+{
+	Mat4 result;
+	result.m11 = a.m11*b.m11 + a.m12*b.m21 + a.m13*b.m31 + a.m14*b.m41;
+	result.m21 = a.m21*b.m11 + a.m22*b.m21 + a.m23*b.m31 + a.m24*b.m41;
+	result.m31 = a.m31*b.m11 + a.m32*b.m21 + a.m33*b.m31 + a.m34*b.m41;
+	result.m41 = a.m41*b.m11 + a.m42*b.m21 + a.m43*b.m31 + a.m44*b.m41;
+
+	result.m12 = a.m11*b.m12 + a.m12*b.m22 + a.m13*b.m32 + a.m14*b.m42;
+	result.m22 = a.m21*b.m12 + a.m22*b.m22 + a.m23*b.m32 + a.m24*b.m42;
+	result.m32 = a.m31*b.m12 + a.m32*b.m22 + a.m33*b.m32 + a.m34*b.m42;
+	result.m42 = a.m41*b.m12 + a.m42*b.m22 + a.m43*b.m32 + a.m44*b.m42;
+
+	result.m13 = a.m11*b.m13 + a.m12*b.m23 + a.m13*b.m33 + a.m14*b.m43;
+	result.m23 = a.m21*b.m13 + a.m22*b.m23 + a.m23*b.m33 + a.m24*b.m43;
+	result.m33 = a.m31*b.m13 + a.m32*b.m23 + a.m33*b.m33 + a.m34*b.m43;
+	result.m43 = a.m41*b.m13 + a.m42*b.m23 + a.m43*b.m33 + a.m44*b.m43;
+
+	result.m14 = a.m11*b.m14 + a.m12*b.m24 + a.m13*b.m34 + a.m14*b.m44;
+	result.m24 = a.m21*b.m14 + a.m22*b.m24 + a.m23*b.m34 + a.m24*b.m44;
+	result.m34 = a.m31*b.m14 + a.m32*b.m24 + a.m33*b.m34 + a.m34*b.m44;
+	result.m44 = a.m41*b.m14 + a.m42*b.m24 + a.m43*b.m34 + a.m44*b.m44;
+
+	return result;
 }
 
 inline Mat4
@@ -396,54 +464,12 @@ inverse(const Mat4 &m)
 	          m.m23 * m.m32 * m.m44 -
 	          m.m24 * m.m33 * m.m42;
 
-	inv.m12 = m.m12 * m.m34 * m.m43 +
-	          m.m13 * m.m32 * m.m44 +
-	          m.m14 * m.m33 * m.m42 -
-	          m.m12 * m.m33 * m.m44 -
-	          m.m13 * m.m34 * m.m42 -
-	          m.m14 * m.m32 * m.m43;
-
-	inv.m13 = m.m12 * m.m23 * m.m44 +
-	          m.m13 * m.m24 * m.m42 +
-	          m.m14 * m.m22 * m.m43 -
-	          m.m12 * m.m24 * m.m43 -
-	          m.m13 * m.m22 * m.m44 -
-	          m.m14 * m.m23 * m.m42;
-
-	inv.m14 = m.m12 * m.m24 * m.m33 +
-	          m.m13 * m.m22 * m.m34 +
-	          m.m14 * m.m23 * m.m32 -
-	          m.m12 * m.m23 * m.m34 -
-	          m.m13 * m.m24 * m.m32 -
-	          m.m14 * m.m22 * m.m33;
-
 	inv.m21 = m.m21 * m.m34 * m.m43 +
 	          m.m23 * m.m31 * m.m44 +
 	          m.m24 * m.m33 * m.m41 -
 	          m.m21 * m.m33 * m.m44 -
 	          m.m23 * m.m34 * m.m41 -
 	          m.m24 * m.m31 * m.m43;
-
-	inv.m22 = m.m11 * m.m33 * m.m44 +
-	          m.m13 * m.m34 * m.m41 +
-	          m.m14 * m.m31 * m.m43 -
-	          m.m11 * m.m34 * m.m43 -
-	          m.m13 * m.m31 * m.m44 -
-	          m.m14 * m.m33 * m.m41;
-
-	inv.m23 = m.m11 * m.m24 * m.m43 +
-	          m.m13 * m.m21 * m.m44 +
-	          m.m14 * m.m23 * m.m41 -
-	          m.m11 * m.m23 * m.m44 -
-	          m.m13 * m.m24 * m.m41 -
-	          m.m14 * m.m21 * m.m43;
-
-	inv.m24 = m.m11 * m.m23 * m.m34 +
-	          m.m13 * m.m24 * m.m31 +
-	          m.m14 * m.m21 * m.m33 -
-	          m.m11 * m.m24 * m.m33 -
-	          m.m13 * m.m21 * m.m34 -
-	          m.m14 * m.m23 * m.m31;
 
 	inv.m31 = m.m21 * m.m32 * m.m44 +
 	          m.m22 * m.m34 * m.m41 +
@@ -452,33 +478,33 @@ inverse(const Mat4 &m)
 	          m.m22 * m.m31 * m.m44 -
 	          m.m24 * m.m32 * m.m41;
 
-	inv.m32 = m.m11 * m.m34 * m.m42 +
-	          m.m12 * m.m31 * m.m44 +
-	          m.m14 * m.m32 * m.m41 -
-	          m.m11 * m.m32 * m.m44 -
-	          m.m12 * m.m34 * m.m41 -
-	          m.m14 * m.m31 * m.m41;
-
-	inv.m33 = m.m11 * m.m22 * m.m44 +
-	          m.m12 * m.m24 * m.m41 +
-	          m.m14 * m.m21 * m.m42 -
-	          m.m11 * m.m24 * m.m42 -
-	          m.m12 * m.m21 * m.m44 -
-	          m.m14 * m.m22 * m.m41;
-
-	inv.m34 = m.m11 * m.m24 * m.m32 +
-	          m.m12 * m.m21 * m.m34 +
-	          m.m14 * m.m22 * m.m31 -
-	          m.m11 * m.m22 * m.m34 -
-	          m.m12 * m.m24 * m.m31 -
-	          m.m14 * m.m21 * m.m32;
-
 	inv.m41 = m.m21 * m.m33 * m.m42 +
 	          m.m22 * m.m31 * m.m43 +
 	          m.m23 * m.m32 * m.m41 -
 	          m.m21 * m.m32 * m.m43 -
 	          m.m22 * m.m33 * m.m41 -
 	          m.m23 * m.m31 * m.m42;
+
+	inv.m12 = m.m12 * m.m34 * m.m43 +
+	          m.m13 * m.m32 * m.m44 +
+	          m.m14 * m.m33 * m.m42 -
+	          m.m12 * m.m33 * m.m44 -
+	          m.m13 * m.m34 * m.m42 -
+	          m.m14 * m.m32 * m.m43;
+
+	inv.m22 = m.m11 * m.m33 * m.m44 +
+	          m.m13 * m.m34 * m.m41 +
+	          m.m14 * m.m31 * m.m43 -
+	          m.m11 * m.m34 * m.m43 -
+	          m.m13 * m.m31 * m.m44 -
+	          m.m14 * m.m33 * m.m41;
+
+	inv.m32 = m.m11 * m.m34 * m.m42 +
+	          m.m12 * m.m31 * m.m44 +
+	          m.m14 * m.m32 * m.m41 -
+	          m.m11 * m.m32 * m.m44 -
+	          m.m12 * m.m34 * m.m41 -
+	          m.m14 * m.m31 * m.m42;
 
 	inv.m42 = m.m11 * m.m32 * m.m43 +
 	          m.m12 * m.m33 * m.m41 +
@@ -487,12 +513,54 @@ inverse(const Mat4 &m)
 	          m.m12 * m.m31 * m.m43 -
 	          m.m13 * m.m32 * m.m41;
 
+	inv.m13 = m.m12 * m.m23 * m.m44 +
+	          m.m13 * m.m24 * m.m42 +
+	          m.m14 * m.m22 * m.m43 -
+	          m.m12 * m.m24 * m.m43 -
+	          m.m13 * m.m22 * m.m44 -
+	          m.m14 * m.m23 * m.m42;
+
+	inv.m23 = m.m11 * m.m24 * m.m43 +
+	          m.m13 * m.m21 * m.m44 +
+	          m.m14 * m.m23 * m.m41 -
+	          m.m11 * m.m23 * m.m44 -
+	          m.m13 * m.m24 * m.m41 -
+	          m.m14 * m.m21 * m.m43;
+
+	inv.m33 = m.m11 * m.m22 * m.m44 +
+	          m.m12 * m.m24 * m.m41 +
+	          m.m14 * m.m21 * m.m42 -
+	          m.m11 * m.m24 * m.m42 -
+	          m.m12 * m.m21 * m.m44 -
+	          m.m14 * m.m22 * m.m41;
+
 	inv.m43 = m.m11 * m.m23 * m.m42 +
 	          m.m12 * m.m21 * m.m43 +
 	          m.m13 * m.m22 * m.m41 -
 	          m.m11 * m.m22 * m.m43 -
 	          m.m12 * m.m23 * m.m41 -
 	          m.m13 * m.m21 * m.m42;
+
+	inv.m14 = m.m12 * m.m24 * m.m33 +
+	          m.m13 * m.m22 * m.m34 +
+	          m.m14 * m.m23 * m.m32 -
+	          m.m12 * m.m23 * m.m34 -
+	          m.m13 * m.m24 * m.m32 -
+	          m.m14 * m.m22 * m.m33;
+
+	inv.m24 = m.m11 * m.m23 * m.m34 +
+	          m.m13 * m.m24 * m.m31 +
+	          m.m14 * m.m21 * m.m33 -
+	          m.m11 * m.m24 * m.m33 -
+	          m.m13 * m.m21 * m.m34 -
+	          m.m14 * m.m23 * m.m31;
+
+	inv.m34 = m.m11 * m.m24 * m.m32 +
+	          m.m12 * m.m21 * m.m34 +
+	          m.m14 * m.m22 * m.m31 -
+	          m.m11 * m.m22 * m.m34 -
+	          m.m12 * m.m24 * m.m31 -
+	          m.m14 * m.m21 * m.m32;
 
 	inv.m44 = m.m11 * m.m22 * m.m33 +
                   m.m12 * m.m23 * m.m31 +
