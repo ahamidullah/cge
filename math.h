@@ -332,8 +332,10 @@ length(Vec3f v)
 
 struct Mat4 {
 	//float m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44;
-	float m11, m21, m31, m41, m12, m22, m32, m42, m13, m23, m33, m43, m14, m24, m34, m44;
-	float &operator[](int i) { return (&m11)[i]; }
+	//float m11, m21, m31, m41, m12, m22, m32, m42, m13, m23, m33, m43, m14, m24, m34, m44;
+	float m[16];
+	float &operator[](int i) { return m[i]; }
+	float &operator()(int row, int col) { return m[((col - 1) << 2) + (row - 1)]; }
 };
 
 inline Mat4
@@ -374,18 +376,18 @@ view_matrix(Vec3f eye, Vec3f zaxis)
 inline Mat4
 transpose(Mat4 m)
 {
-	return { m.m11, m.m21, m.m31, m.m41,
-	         m.m12, m.m22, m.m32, m.m42,
-	         m.m13, m.m23, m.m33, m.m43,
-	         m.m14, m.m24, m.m34, m.m44 };
+	return { m[0], m[4], m[8],  m[12],
+	         m[1], m[5], m[9],  m[13],
+	         m[2], m[6], m[10], m[14],
+	         m[3], m[7], m[11], m[15] };
 }
 
 inline Mat4
 translate(Mat4 m, Vec3f pos)
 {
-	m.m14 = pos.x;
-	m.m24 = pos.y;
-	m.m34 = pos.z;
+	m(1,4) = pos.x;
+	m(2,4) = pos.y;
+	m(3,4) = pos.z;
 	return m;
 }
 
@@ -402,10 +404,10 @@ inline Vec4f
 operator*(Mat4 m, Vec4f v)
 {
 	Vec4f result;
-	result.x = v.x*m.m11 + v.y*m.m12 + v.z*m.m13 + v.w*m.m14;
-	result.y = v.x*m.m21 + v.y*m.m22 + v.z*m.m23 + v.w*m.m24;
-	result.z = v.x*m.m31 + v.y*m.m32 + v.z*m.m33 + v.w*m.m34;
-	result.w = v.x*m.m41 + v.y*m.m42 + v.z*m.m43 + v.w*m.m44;
+	result.x = v.x*m[0] + v.y*m[4] + v.z*m[8]  + v.w*m[12];
+	result.y = v.x*m[1] + v.y*m[5] + v.z*m[9]  + v.w*m[13];
+	result.z = v.x*m[2] + v.y*m[6] + v.z*m[10] + v.w*m[14];
+	result.w = v.x*m[3] + v.y*m[7] + v.z*m[11] + v.w*m[15];
 	return result;
 }
 
@@ -420,7 +422,15 @@ unproject(Vec3f win, const Mat4 &inverse_proj_view)
 inline Mat4
 operator*(Mat4 a, Mat4 b)
 {
-	Mat4 result;
+	Mat4 res;
+	for (int i = 0; i < 4; ++i) {
+		float a1 = a(i,1), a2 = a(i,2), a3 = a(i,3), a4 = a(i,4);
+		res(i,1) = a1*b(1,1) + a2*b(2,1) + a3*b(3,1) + a4*b(4,1);
+		res(i,2) = a1*b(1,2) + a2*b(2,2) + a3*b(3,2) + a4*b(4,2);
+		res(i,3) = a1*b(1,3) + a2*b(2,3) + a3*b(3,3) + a4*b(4,3);
+		res(i,4) = a1*b(1,4) + a2*b(2,4) + a3*b(3,4) + a4*b(4,4);
+	}
+	/*
 	result.m11 = a.m11*b.m11 + a.m12*b.m21 + a.m13*b.m31 + a.m14*b.m41;
 	result.m21 = a.m21*b.m11 + a.m22*b.m21 + a.m23*b.m31 + a.m24*b.m41;
 	result.m31 = a.m31*b.m11 + a.m32*b.m21 + a.m33*b.m31 + a.m34*b.m41;
@@ -440,8 +450,8 @@ operator*(Mat4 a, Mat4 b)
 	result.m24 = a.m21*b.m14 + a.m22*b.m24 + a.m23*b.m34 + a.m24*b.m44;
 	result.m34 = a.m31*b.m14 + a.m32*b.m24 + a.m33*b.m34 + a.m34*b.m44;
 	result.m44 = a.m41*b.m14 + a.m42*b.m24 + a.m43*b.m34 + a.m44*b.m44;
-
-	return result;
+*/
+	return res;
 }
 
 inline Mat4
@@ -454,125 +464,134 @@ operator*(float a, Mat4 m)
 }
 
 inline Mat4
-inverse(const Mat4 &m)
+inverse(Mat4 m)
 {
 	Mat4 inv;
-	inv.m11 = m.m22 * m.m33 * m.m44 +
-	          m.m23 * m.m34 * m.m42 +
-	          m.m24 * m.m32 * m.m43 -
-	          m.m22 * m.m34 * m.m43 -
-	          m.m23 * m.m32 * m.m44 -
-	          m.m24 * m.m33 * m.m42;
+	inv[0] = m[5]  * m[10] * m[15] - 
+	         m[5]  * m[11] * m[14] - 
+	         m[9]  * m[6]  * m[15] + 
+	         m[9]  * m[7]  * m[14] +
+	         m[13] * m[6]  * m[11] - 
+	         m[13] * m[7]  * m[10];
 
-	inv.m21 = m.m21 * m.m34 * m.m43 +
-	          m.m23 * m.m31 * m.m44 +
-	          m.m24 * m.m33 * m.m41 -
-	          m.m21 * m.m33 * m.m44 -
-	          m.m23 * m.m34 * m.m41 -
-	          m.m24 * m.m31 * m.m43;
+	inv[4] = -m[4]  * m[10] * m[15] + 
+	          m[4]  * m[11] * m[14] + 
+	          m[8]  * m[6]  * m[15] - 
+	          m[8]  * m[7]  * m[14] - 
+	          m[12] * m[6]  * m[11] + 
+	          m[12] * m[7]  * m[10];
 
-	inv.m31 = m.m21 * m.m32 * m.m44 +
-	          m.m22 * m.m34 * m.m41 +
-	          m.m24 * m.m31 * m.m42 -
-	          m.m21 * m.m34 * m.m42 -
-	          m.m22 * m.m31 * m.m44 -
-	          m.m24 * m.m32 * m.m41;
+	inv[8] = m[4]  * m[9] * m[15] - 
+	         m[4]  * m[11] * m[13] - 
+	         m[8]  * m[5] * m[15] + 
+	         m[8]  * m[7] * m[13] + 
+	         m[12] * m[5] * m[11] - 
+	         m[12] * m[7] * m[9];
 
-	inv.m41 = m.m21 * m.m33 * m.m42 +
-	          m.m22 * m.m31 * m.m43 +
-	          m.m23 * m.m32 * m.m41 -
-	          m.m21 * m.m32 * m.m43 -
-	          m.m22 * m.m33 * m.m41 -
-	          m.m23 * m.m31 * m.m42;
+	inv[12] = -m[4]  * m[9] * m[14] + 
+	           m[4]  * m[10] * m[13] +
+	           m[8]  * m[5] * m[14] - 
+	           m[8]  * m[6] * m[13] - 
+	           m[12] * m[5] * m[10] + 
+	           m[12] * m[6] * m[9];
 
-	inv.m12 = m.m12 * m.m34 * m.m43 +
-	          m.m13 * m.m32 * m.m44 +
-	          m.m14 * m.m33 * m.m42 -
-	          m.m12 * m.m33 * m.m44 -
-	          m.m13 * m.m34 * m.m42 -
-	          m.m14 * m.m32 * m.m43;
+	inv[1] = -m[1]  * m[10] * m[15] + 
+	          m[1]  * m[11] * m[14] + 
+	          m[9]  * m[2] * m[15] - 
+	          m[9]  * m[3] * m[14] - 
+	          m[13] * m[2] * m[11] + 
+	          m[13] * m[3] * m[10];
 
-	inv.m22 = m.m11 * m.m33 * m.m44 +
-	          m.m13 * m.m34 * m.m41 +
-	          m.m14 * m.m31 * m.m43 -
-	          m.m11 * m.m34 * m.m43 -
-	          m.m13 * m.m31 * m.m44 -
-	          m.m14 * m.m33 * m.m41;
+	inv[5] = m[0]  * m[10] * m[15] - 
+	         m[0]  * m[11] * m[14] - 
+	         m[8]  * m[2] * m[15] + 
+	         m[8]  * m[3] * m[14] + 
+	         m[12] * m[2] * m[11] - 
+	         m[12] * m[3] * m[10];
 
-	inv.m32 = m.m11 * m.m34 * m.m42 +
-	          m.m12 * m.m31 * m.m44 +
-	          m.m14 * m.m32 * m.m41 -
-	          m.m11 * m.m32 * m.m44 -
-	          m.m12 * m.m34 * m.m41 -
-	          m.m14 * m.m31 * m.m42;
+	inv[9] = -m[0]  * m[9] * m[15] + 
+	          m[0]  * m[11] * m[13] + 
+	          m[8]  * m[1] * m[15] - 
+	          m[8]  * m[3] * m[13] - 
+	          m[12] * m[1] * m[11] + 
+	          m[12] * m[3] * m[9];
 
-	inv.m42 = m.m11 * m.m32 * m.m43 +
-	          m.m12 * m.m33 * m.m41 +
-	          m.m13 * m.m31 * m.m42 -
-	          m.m11 * m.m33 * m.m42 -
-	          m.m12 * m.m31 * m.m43 -
-	          m.m13 * m.m32 * m.m41;
+	inv[13] = m[0]  * m[9] * m[14] - 
+	          m[0]  * m[10] * m[13] - 
+	          m[8]  * m[1] * m[14] + 
+	          m[8]  * m[2] * m[13] + 
+	          m[12] * m[1] * m[10] - 
+	          m[12] * m[2] * m[9];
 
-	inv.m13 = m.m12 * m.m23 * m.m44 +
-	          m.m13 * m.m24 * m.m42 +
-	          m.m14 * m.m22 * m.m43 -
-	          m.m12 * m.m24 * m.m43 -
-	          m.m13 * m.m22 * m.m44 -
-	          m.m14 * m.m23 * m.m42;
+	inv[2] = m[1]  * m[6] * m[15] - 
+	         m[1]  * m[7] * m[14] - 
+	         m[5]  * m[2] * m[15] + 
+	         m[5]  * m[3] * m[14] + 
+	         m[13] * m[2] * m[7] - 
+	         m[13] * m[3] * m[6];
 
-	inv.m23 = m.m11 * m.m24 * m.m43 +
-	          m.m13 * m.m21 * m.m44 +
-	          m.m14 * m.m23 * m.m41 -
-	          m.m11 * m.m23 * m.m44 -
-	          m.m13 * m.m24 * m.m41 -
-	          m.m14 * m.m21 * m.m43;
+	inv[6] = -m[0]  * m[6] * m[15] + 
+	          m[0]  * m[7] * m[14] + 
+	          m[4]  * m[2] * m[15] - 
+	          m[4]  * m[3] * m[14] - 
+	          m[12] * m[2] * m[7] + 
+	          m[12] * m[3] * m[6];
 
-	inv.m33 = m.m11 * m.m22 * m.m44 +
-	          m.m12 * m.m24 * m.m41 +
-	          m.m14 * m.m21 * m.m42 -
-	          m.m11 * m.m24 * m.m42 -
-	          m.m12 * m.m21 * m.m44 -
-	          m.m14 * m.m22 * m.m41;
+	inv[10] = m[0]  * m[5] * m[15] - 
+	          m[0]  * m[7] * m[13] - 
+	          m[4]  * m[1] * m[15] + 
+	          m[4]  * m[3] * m[13] + 
+	          m[12] * m[1] * m[7] - 
+	          m[12] * m[3] * m[5];
 
-	inv.m43 = m.m11 * m.m23 * m.m42 +
-	          m.m12 * m.m21 * m.m43 +
-	          m.m13 * m.m22 * m.m41 -
-	          m.m11 * m.m22 * m.m43 -
-	          m.m12 * m.m23 * m.m41 -
-	          m.m13 * m.m21 * m.m42;
+	inv[14] = -m[0]  * m[5] * m[14] + 
+	           m[0]  * m[6] * m[13] + 
+	           m[4]  * m[1] * m[14] - 
+	           m[4]  * m[2] * m[13] - 
+	           m[12] * m[1] * m[6] + 
+	           m[12] * m[2] * m[5];
 
-	inv.m14 = m.m12 * m.m24 * m.m33 +
-	          m.m13 * m.m22 * m.m34 +
-	          m.m14 * m.m23 * m.m32 -
-	          m.m12 * m.m23 * m.m34 -
-	          m.m13 * m.m24 * m.m32 -
-	          m.m14 * m.m22 * m.m33;
+	inv[3] = -m[1] * m[6] * m[11] + 
+	          m[1] * m[7] * m[10] + 
+	          m[5] * m[2] * m[11] - 
+	          m[5] * m[3] * m[10] - 
+	          m[9] * m[2] * m[7] + 
+	          m[9] * m[3] * m[6];
 
-	inv.m24 = m.m11 * m.m23 * m.m34 +
-	          m.m13 * m.m24 * m.m31 +
-	          m.m14 * m.m21 * m.m33 -
-	          m.m11 * m.m24 * m.m33 -
-	          m.m13 * m.m21 * m.m34 -
-	          m.m14 * m.m23 * m.m31;
+	inv[7] = m[0] * m[6] * m[11] - 
+	         m[0] * m[7] * m[10] - 
+	         m[4] * m[2] * m[11] + 
+	         m[4] * m[3] * m[10] + 
+	         m[8] * m[2] * m[7] - 
+	         m[8] * m[3] * m[6];
 
-	inv.m34 = m.m11 * m.m24 * m.m32 +
-	          m.m12 * m.m21 * m.m34 +
-	          m.m14 * m.m22 * m.m31 -
-	          m.m11 * m.m22 * m.m34 -
-	          m.m12 * m.m24 * m.m31 -
-	          m.m14 * m.m21 * m.m32;
+	inv[11] = -m[0] * m[5] * m[11] + 
+	           m[0] * m[7] * m[9] + 
+	           m[4] * m[1] * m[11] - 
+	           m[4] * m[3] * m[9] - 
+	           m[8] * m[1] * m[7] + 
+	           m[8] * m[3] * m[5];
 
-	inv.m44 = m.m11 * m.m22 * m.m33 +
-                  m.m12 * m.m23 * m.m31 +
-	          m.m13 * m.m21 * m.m32 -
-	          m.m11 * m.m23 * m.m32 -
-	          m.m12 * m.m21 * m.m33 -
-	          m.m13 * m.m22 * m.m31;
+	inv[15] = m[0] * m[5] * m[10] - 
+	          m[0] * m[6] * m[9] - 
+	          m[4] * m[1] * m[10] + 
+	          m[4] * m[2] * m[9] + 
+	          m[8] * m[1] * m[6] - 
+	          m[8] * m[2] * m[5];
 
-	float det = m.m11 * inv.m11 + m.m12 * inv.m21 + m.m13 * inv.m31 + m.m14 * inv.m41;
-	if (det == 0)
-		return {}; // TEMP
-	return (1.0f / det) * inv;
+	float det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+
+	if (det == 0) {
+		assert(0); // TEMP
+		return {};
+	}
+
+	det = 1.0 / det;
+
+	for (int i = 0; i < 16; i++)
+		inv[i] = inv[i] * det;
+
+	return inv;
 }
 
 #endif
