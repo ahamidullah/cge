@@ -216,6 +216,22 @@ operator*(float a, Vec3f b)
 }
 
 inline Vec3f
+operator/(Vec3f v, float divisor)
+{
+	Vec3f res;
+	res.x = v.x / divisor;
+	res.y = v.y / divisor;
+	res.z = v.z / divisor;
+	return res;
+}
+
+inline Vec3f
+operator-(Vec3f v)
+{
+	return -1.0f * v;
+}
+
+inline Vec3f
 operator-(Vec3f a, Vec3f b)
 {
 	Vec3f result;
@@ -274,7 +290,7 @@ operator/=(float v)
 
 // Quake approximation...
 float
-inv_sqrt( float number )
+inv_sqrt(float number)
 {
 	long i;
 	float x2, y;
@@ -341,10 +357,11 @@ struct Mat4 {
 inline Mat4
 perspective_matrix(float fovy, float aspect_ratio, float near, float far)
 {
-	float top = _tan((fovy / 2) * M_DEG_TO_RAD);
+	//float top = _tan((fovy / 2) * M_DEG_TO_RAD);
+	float top = _tan((fovy / 2) * M_DEG_TO_RAD) * near;
 	float right = top * aspect_ratio;
-	return { (1.0f / right), 0, 0, 0,
-	         0, (1.0f / top), 0, 0,
+	return { (near / right), 0, 0, 0,
+	         0, (near / top), 0, 0,
 	         0, 0, (-(far + near) / (far - near)), -1.0f,
 	         0, 0, ((-2*far*near) / (far - near)), 0     };
 }
